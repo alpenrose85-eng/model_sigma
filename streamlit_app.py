@@ -11,7 +11,6 @@ from sklearn.metrics import mean_squared_error, r2_score
 
 st.set_page_config(page_title="Sigma-phase temperature inspector", layout="wide")
 
-DATA_PATH = Path(__file__).resolve().parent / "data" / "initial_data.csv"
 R = 8.314
 
 COLUMN_RENAMES = {
@@ -24,13 +23,13 @@ COLUMN_RENAMES = {
 
 
 def load_data(uploaded):
-    if uploaded is not None:
-        if uploaded.name.endswith(".xlsx") or uploaded.name.endswith(".xls"):
-            df = pd.read_excel(uploaded)
-        else:
-            df = pd.read_csv(uploaded)
+    if uploaded is None:
+        return pd.DataFrame()
+
+    if uploaded.name.endswith(".xlsx") or uploaded.name.endswith(".xls"):
+        df = pd.read_excel(uploaded)
     else:
-        df = pd.read_csv(DATA_PATH)
+        df = pd.read_csv(uploaded)
 
     df = df.rename(columns=COLUMN_RENAMES)
     expected = set(COLUMN_RENAMES.values())
@@ -197,14 +196,18 @@ def main():
     st.markdown(
         """
         Анализируем рост σ-фазы в стали 12Х18Н12Т, подбираем параметрические модели и
-        получаем оценку температуры эксплуатации по новым точкам. Текущий набор данных
-        лежит в `data/initial_data.csv`.
+        получаем оценку температуры эксплуатации по твоим точкам. Загружай свежие CSV/XLSX
+        в виджете слева — никаких встроенных данных, только то, что ты проверяешь прямо сейчас.
         """
     )
 
     with st.sidebar.expander("Загрузка данных"):
-        uploaded = st.file_uploader("CSV или Excel с измерениями", type=["csv", "xlsx", "xls"])
-        st.caption("Формат: G, T_C, tau_h, dэкв_мкм, c_sigma_pct")
+        uploaded = st.file_uploader("Загрузи CSV или Excel с измерениями", type=["csv", "xlsx", "xls"])
+        st.caption("Обязательно: G, T_C, tau_h, dэкв_мкм; c_sigma_pct опционально")
+
+    if uploaded is None:
+        st.info("Загрузи файл с новыми экспериментальными точками — после загрузки появятся модели и графики.")
+        return
 
     try:
         df = load_data(uploaded)
@@ -234,28 +237,36 @@ def main():
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("### Ростовая модель")
-        st.markdown(f"- $k_0 = e^{{{growth_model['intercept']:.2f}}} \approx {growth_model['k0']:.0f}$")
-        st.markdown(f"- $Q = {-growth_model['beta_T'] * R / 1000:.1f}\,\mathrm{{кДж/моль}}$")
-        st.markdown(f"- $\beta_G$: {growth_model['beta_G']:.3f}$")
-        st.markdown(f"- RMSE (диаметр): {growth_model['metric']['rmse']:.3f}\,μm")
-        st.markdown(f"- RMSE (лог): {growth_model['metric']['rmse_log']:.3f}")
-        st.markdown(f"- R²: {growth_model['metric']['r2']:.3f}")
-        st.markdown(f"- RMSE температуры: {growth_model['temp_rmse_K']:.1f}\,K")
-
         st.markdown(
-            "Модель описывает: $D^m = k_0\cdot \exp(-Q/(RT))\cdot\tau\cdot\exp(\beta_G G)$."
+            f"""
+            - $k_0 = e^{{{growth_model['intercept']:.2f}}} \approx {growth_model['k0']:.0f}$
+            - $Q = {-growth_model['beta_T'] * R / 1000:.1f}\,\mathrm{{кДж/моль}}$
+            - $\beta_G = {growth_model['beta_G']:.3f}$
+            - $\mathrm{{RMSE}}(D) = {growth_model['metric']['rmse']:.3f}\,\mu\mathrm{{m}}$
+            - $\mathrm{{RMSE}}(\ln D) = {growth_model['metric']['rmse_log']:.3f}$
+            - $R^2 = {growth_model['metric']['r2']:.3f}$
+            - $\mathrm{{RMSE}}(T) = {growth_model['temp_rmse_K']:.1f}\,\mathrm{{K}}$
+            """,
+            unsafe_allow_html=True,
         )
+        st.latex(r"D^m = k_0 \cdot e^{-Q/(RT)} \cdot \tau \cdot e^{\beta_G G}")
+
     with col2:
         st.markdown("### Модель с $k_G$")
-        st.markdown("Исходный коэффициент зерна: $k_G = 1.66\cdot G^{-0.33}$")
-        st.markdown("Модель: $\ln D = a + b\ln\tau + c\ln k_G + \beta_T/T$.")
-        st.markdown(f"- $b = {kG_model['beta_tau']:.3f}$")
-        st.markdown(f"- $c = {kG_model['beta_kG']:.3f}$")
-        st.markdown(f"- $\beta_T = {kG_model['beta_T']:.1f}$")
-        st.markdown(f"- RMSE (диаметр): {kG_model['metric']['rmse']:.3f}\,μm")
-        st.markdown(f"- RMSE (лог): {kG_model['metric']['rmse_log']:.3f}")
-        st.markdown(f"- R²: {kG_model['metric']['r2']:.3f}")
-        st.markdown(f"- RMSE температуры: {kG_model['temp_rmse_K']:.1f}\,K")
+        st.markdown(r"Исходный коэффициент зерна: $k_G = 1.66 \cdot G^{-0.33}$")
+        st.latex(r"\ln D = a + b \ln \tau + c \ln k_G + \beta_T / T")
+        st.markdown(
+            f"""
+            - $b = {kG_model['beta_tau']:.3f}$
+            - $c = {kG_model['beta_kG']:.3f}$
+            - $\beta_T = {kG_model['beta_T']:.1f}$
+            - $\mathrm{{RMSE}}(D) = {kG_model['metric']['rmse']:.3f}\,\mu\mathrm{{m}}$
+            - $\mathrm{{RMSE}}(\ln D) = {kG_model['metric']['rmse_log']:.3f}$
+            - $R^2 = {kG_model['metric']['r2']:.3f}$
+            - $\mathrm{{RMSE}}(T) = {kG_model['temp_rmse_K']:.1f}\,\mathrm{{K}}$
+            """,
+            unsafe_allow_html=True,
+        )
 
     st.subheader("Дополнительные модели температуры")
     col3, col4 = st.columns(2)
@@ -348,7 +359,7 @@ def main():
     st.markdown("---")
     st.info(
         "– `m` лучше выбирать по графику RMSE (в боковой панели).\n"
-        "– При появлении новых точек загружай CSV/XLSX или дополняй `data/initial_data.csv`."
+        "– Загружай новые точки через uploader — приложение всегда работает с тем файлом, который ты сейчас проверяешь."
     )
 
 
