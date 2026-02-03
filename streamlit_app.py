@@ -198,28 +198,27 @@ def fit_growth_model(df, m, include_predictions=False):
 
 def fit_kG_model(df, include_predictions=False):
     df = df.copy()
-    df["k_G"] = 1.66 * df["G"] ** -0.33
     y = np.log(df["d_equiv_um"])
     X = np.column_stack([
         np.ones(len(df)),
         np.log(df["tau_h"]),
-        np.log(df["k_G"]),
+        np.log(df["G"]),
         1.0 / df["T_K"],
     ])
     beta, *_ = np.linalg.lstsq(X, y, rcond=None)
-    intercept, beta_tau, beta_kG, beta_T = beta
+    intercept, beta_tau, gamma, beta_T = beta
     y_pred = X @ beta
     d_pred = np.exp(y_pred)
     metrics = compute_metrics(df["d_equiv_um"], d_pred)
     model = {
         "intercept": intercept,
         "beta_tau": beta_tau,
-        "beta_kG": beta_kG,
+        "gamma": gamma,
         "beta_T": beta_T,
         "metric": metrics,
     }
     if include_predictions:
-        value = np.log(df["d_equiv_um"]) - intercept - beta_tau * np.log(df["tau_h"]) - beta_kG * np.log(df["k_G"])
+        value = np.log(df["d_equiv_um"]) - intercept - beta_tau * np.log(df["tau_h"]) - gamma * np.log(df["G"])
         with np.errstate(divide="ignore", invalid="ignore"):
             denom = value / beta_T
             T_pred = np.where(denom > 0, 1.0 / denom, np.nan)
@@ -365,13 +364,12 @@ def main():
         st.latex(r"D^m = k_0 \cdot e^{-Q/(RT)} \cdot \tau \cdot e^{\beta_G G}")
 
     with col2:
-        st.markdown("### Модель с $k_G$")
-        st.markdown(r"Исходный коэффициент зерна: $k_G = 1.66 \cdot G^{-0.33}$")
-        st.latex(r"\ln D = a + b \ln \tau + c \ln k_G + \beta_T / T")
+        st.markdown("### Модель с $k_G$(подгон)")
+        st.markdown(r"Модель: $\ln D = a + b \ln \tau + \gamma \ln G + \beta_T / T$")
+        st.markdown(fr"- $\gamma = {kG_model['gamma']:.3f}$ → $k_G = G^{{{kG_model['gamma']:.3f}}}$")
         st.markdown(
             fr"""
             - $b = {kG_model['beta_tau']:.3f}$
-            - $c = {kG_model['beta_kG']:.3f}$
             - $\beta_T = {kG_model['beta_T']:.1f}$
             - $\mathrm{{RMSE}}(D) = {kG_model['metric']['rmse']:.3f}\,\mu\mathrm{{m}}$
             - $\mathrm{{RMSE}}(\ln D) = {kG_model['metric']['rmse_log']:.3f}$
