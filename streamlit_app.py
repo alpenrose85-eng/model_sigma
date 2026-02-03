@@ -23,6 +23,48 @@ COLUMN_RENAMES = {
 
 SIGMA_TEMP_MIN = 560
 SIGMA_TEMP_MAX = 900
+SIGMA_TEMP_WIDTH = 8
+
+
+def sigma_activity(T_K):
+    T_C = T_K - 273.15
+    lower = 1.0 / (1.0 + np.exp(-(T_C - SIGMA_TEMP_MIN) / SIGMA_TEMP_WIDTH))
+    upper = 1.0 / (1.0 + np.exp((T_C - SIGMA_TEMP_MAX) / SIGMA_TEMP_WIDTH))
+    return lower * upper
+
+
+def compute_predicted_diameter(T_K, tau, G, model, m):
+    k0 = model["k0"]
+    Q = model["Q_J"]
+    beta_G = model["beta_G"]
+    gamma = sigma_activity(T_K)
+    exponent = -Q / (R * T_K)
+    return (k0 * gamma * tau * np.exp(beta_G * G) * np.exp(exponent)) ** (1.0 / m)
+
+
+def solve_temperature_for_growth(model, m, D, tau, G):
+    def f(T):
+        return compute_predicted_diameter(T, tau, G, model, m) - D
+
+    min_k = SIGMA_TEMP_MIN + 273.15
+    max_k = SIGMA_TEMP_MAX + 273.15
+    f_min = f(min_k)
+    f_max = f(max_k)
+    if np.sign(f_min) == np.sign(f_max):
+        return None
+
+    a, b = min_k, max_k
+    for _ in range(40):
+        mid = 0.5 * (a + b)
+        f_mid = f(mid)
+        if abs(f_mid) < 1e-3:
+            return mid
+        if np.sign(f_mid) == np.sign(f_min):
+            a = mid
+            f_min = f_mid
+        else:
+            b = mid
+    return 0.5 * (a + b)
 
 
 def load_data(uploaded):
@@ -68,6 +110,53 @@ def compute_temp_metrics(T_true, T_pred):
     return {"rmse": rmse}
 
 
+def sigma_activity(T_K):
+    T_C = T_K - 273.15
+    lower = 1.0 / (1.0 + np.exp(-(T_C - SIGMA_TEMP_MIN) / SIGMA_TEMP_WIDTH))
+    upper = 1.0 / (1.0 + np.exp((T_C - SIGMA_TEMP_MAX) / SIGMA_TEMP_WIDTH))
+    return lower * upper
+
+
+def compute_predicted_diameter(T_K, tau, G, model, m):
+    k0 = model["k0"]
+    Q_J = model["Q_J"]
+    beta_G = model["beta_G"]
+    gamma = sigma_activity(T_K)
+    exponent = -Q_J / (R * T_K)
+    return (k0 * gamma * tau * np.exp(beta_G * G) * np.exp(exponent)) ** (1.0 / m)
+
+
+def solve_temperature_for_growth(model, m, D, tau, G):
+    def f(T):
+        return compute_predicted_diameter(T, tau, G, model, m) - D
+
+    min_k = SIGMA_TEMP_MIN + 273.15
+    max_k = SIGMA_TEMP_MAX + 273.15
+    f_min = f(min_k)
+    f_max = f(max_k)
+    if np.sign(f_min) == np.sign(f_max):
+        return None
+
+    a, b = min_k, max_k
+    for _ in range(40):
+        mid = 0.5 * (a + b)
+        f_mid = f(mid)
+        if abs(f_mid) < 1e-3:
+            return mid
+        if np.sign(f_mid) == np.sign(f_min):
+            a = mid
+            f_min = f_mid
+        else:
+            b = mid
+    return 0.5 * (a + b)
+
+
+def clamp_temperature(T_arr):
+    min_K = SIGMA_TEMP_MIN + 273.15
+    max_K = SIGMA_TEMP_MAX + 273.15
+    return np.where((T_arr >= min_K) & (T_arr <= max_K), T_arr, np.nan)
+
+
 def fit_growth_model(df, m, include_predictions=False):
     df = df.copy()
     y = m * np.log(df["d_equiv_um"]) - np.log(df["tau_h"])
@@ -78,27 +167,29 @@ def fit_growth_model(df, m, include_predictions=False):
     ])
     beta, *_ = np.linalg.lstsq(X, y, rcond=None)
     intercept, beta_T, beta_G = beta
-    y_pred = X @ beta
-    d_pred = np.exp((y_pred + np.log(df["tau_h"])) / m)
+    Q_J = -beta_T * R
+    k0 = math.exp(intercept)
+    d_pred = compute_predicted_diameter(df["T_K"], df["tau_h"], df["G"], {"k0": k0, "beta_G": beta_G, "Q_J": Q_J}, m)
     metrics = compute_metrics(df["d_equiv_um"], d_pred)
     model = {
         "intercept": intercept,
         "beta_T": beta_T,
         "beta_G": beta_G,
-        "k0": math.exp(intercept),
-        "Q_kJ_per_mol": -beta_T * R / 1000.0,
+        "k0": k0,
+        "Q_J": Q_J,
+        "Q_kJ_per_mol": Q_J / 1000.0,
         "metric": metrics,
     }
     if include_predictions:
-        value = m * np.log(df["d_equiv_um"]) - np.log(df["tau_h"]) - intercept - beta_G * df["G"]
-        with np.errstate(divide="ignore", invalid="ignore"):
-            denom = value / beta_T
-            T_pred = np.where(denom > 0, 1.0 / denom, np.nan)
+        T_pred = []
+        for D_val, tau_val, G_val in zip(df["d_equiv_um"], df["tau_h"], df["G"]):
+            T_est = solve_temperature_for_growth(model, m, D_val, tau_val, G_val)
+            T_pred.append(T_est)
+        T_pred = np.array(T_pred)
         mask = ~np.isnan(T_pred)
         temp_rmse = math.sqrt(np.mean((T_pred[mask] - df["T_K"][mask]) ** 2)) if mask.any() else float("nan")
         model.update({
             "D_pred": d_pred,
-            "y_pred": y_pred,
             "T_pred_K": T_pred,
             "temp_rmse_K": temp_rmse,
         })
@@ -150,7 +241,9 @@ def estimate_temperature_growth(model, D, tau, G, m):
     denom = value / model["beta_T"]
     if denom <= 0:
         return None
-    return 1.0 / denom
+    T = 1.0 / denom
+    T = clamp_temperature(np.array([T]))
+    return float(T) if np.isfinite(T) else None
 
 
 def estimate_temperature_kG(model, D, tau, G):
@@ -161,7 +254,9 @@ def estimate_temperature_kG(model, D, tau, G):
     denom = value / model["beta_T"]
     if denom <= 0:
         return None
-    return 1.0 / denom
+    T = 1.0 / denom
+    T = clamp_temperature(np.array([T]))
+    return float(T) if np.isfinite(T) else None
 
 
 def fit_inverse_temp_model(df):
