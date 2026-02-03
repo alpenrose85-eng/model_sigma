@@ -248,8 +248,7 @@ def estimate_temperature_growth(model, D, tau, G, m):
 def estimate_temperature_kG(model, D, tau, G):
     if model["beta_T"] == 0:
         return None
-    k_G = 1.66 * G ** -0.33
-    value = math.log(D) - model["intercept"] - model["beta_tau"] * math.log(tau) - model["beta_kG"] * math.log(k_G)
+    value = math.log(D) - model["intercept"] - model["beta_tau"] * math.log(tau) - model["gamma"] * math.log(G)
     denom = value / model["beta_T"]
     if denom <= 0:
         return None
