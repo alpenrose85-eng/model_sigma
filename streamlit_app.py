@@ -240,9 +240,11 @@ def estimate_temperature_growth(model, D, tau, G, m):
     denom = value / model["beta_T"]
     if denom <= 0:
         return None
-    T = 1.0 / denom
-    T = clamp_temperature(np.array([T]))
-    return float(T) if np.isfinite(T) else None
+    T_val = 1.0 / denom
+    T_arr = clamp_temperature(np.array([T_val]))
+    if not np.isfinite(T_arr[0]):
+        return None
+    return float(T_arr[0])
 
 
 def estimate_temperature_kG(model, D, tau, G):
@@ -252,9 +254,11 @@ def estimate_temperature_kG(model, D, tau, G):
     denom = value / model["beta_T"]
     if denom <= 0:
         return None
-    T = 1.0 / denom
-    T = clamp_temperature(np.array([T]))
-    return float(T) if np.isfinite(T) else None
+    T_val = 1.0 / denom
+    T_arr = clamp_temperature(np.array([T_val]))
+    if not np.isfinite(T_arr[0]):
+        return None
+    return float(T_arr[0])
 
 
 def fit_inverse_temp_model(df):
