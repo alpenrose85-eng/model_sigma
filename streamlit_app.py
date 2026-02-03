@@ -184,8 +184,8 @@ def fit_growth_model(df, m, include_predictions=False):
         T_pred = []
         for D_val, tau_val, G_val in zip(df["d_equiv_um"], df["tau_h"], df["G"]):
             T_est = solve_temperature_for_growth(model, m, D_val, tau_val, G_val)
-            T_pred.append(T_est)
-        T_pred = np.array(T_pred)
+            T_pred.append(np.nan if T_est is None else T_est)
+        T_pred = np.array(T_pred, dtype=float)
         mask = ~np.isnan(T_pred)
         temp_rmse = math.sqrt(np.mean((T_pred[mask] - df["T_K"][mask]) ** 2)) if mask.any() else float("nan")
         model.update({
