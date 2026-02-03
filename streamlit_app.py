@@ -387,6 +387,58 @@ def main():
     st.download_button("Скачать таблицу с предсказаниями", csv, "predictions.csv", "text/csv")
     st.markdown("В таблице указаны температуры в °C и процентное отклонение экспериментального диаметра от предсказанного (выделено, если >10%).")
 
+    df_analysis = display_df.copy()
+    df_analysis["error_growth"] = df_analysis["d_equiv_um"] - df_analysis["D_pred_growth"]
+    df_analysis["abs_pct_growth"] = percent_error(df_analysis["d_equiv_um"], df_analysis["D_pred_growth"])
+
+    summary_by_G = (
+        df_analysis.groupby("G")
+        .agg(
+            count=("d_equiv_um", "count"),
+            mean_abs_pct=("abs_pct_growth", "mean"),
+            error_mean=("error_growth", "mean"),
+            error_std=("error_growth", "std"),
+        )
+        .sort_values("mean_abs_pct")
+    )
+
+    df_analysis["temp_bin"] = pd.cut(df_analysis["T_C"], bins=[-1, 600, 650, 700, 750, 1000], labels=["≤600", "600-650", "650-700", "700-750", ">750"])
+    summary_by_temp = (
+        df_analysis.groupby("temp_bin")
+        .agg(
+            count=("d_equiv_um", "count"),
+            mean_abs_pct=("abs_pct_growth", "mean"),
+            error_std=("error_growth", "std"),
+        )
+        .sort_index()
+    )
+
+    top_outliers = df_analysis.sort_values("abs_pct_growth", ascending=False).head(5)[
+        ["G", "T_C", "tau_h", "d_equiv_um", "D_pred_growth", "abs_pct_growth"]
+    ]
+
+    st.subheader("Анализ точности модели")
+    fig_bins, ax_bins = plt.subplots(figsize=(6, 4))
+    summary_by_temp_plot = summary_by_temp.reset_index()
+    ax_bins.bar(summary_by_temp_plot['temp_bin'].astype(str), summary_by_temp_plot['mean_abs_pct'], color='tab:blue', alpha=0.7)
+    ax_bins.set_xlabel("Температурный диапазон, °C")
+    ax_bins.set_ylabel("Среднее % отклонение")
+    ax_bins.set_title("Точность по температурным диапазонам")
+    ax_bins.grid(axis='y', linestyle='--', alpha=0.5)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("### По номеру зерна")
+        st.write("Чем меньше среднее абсолютное отклонение, тем стабильнее модель описывает зерно.")
+        st.dataframe(summary_by_G.style.format({"mean_abs_pct": "{:.1f}%", "error_mean": "{:.3f}", "error_std": "{:.3f}"}))
+    with col2:
+        st.markdown("### По температурным диапазонам")
+        st.write("Наилучшая точность заметна в диапазоне 600-650°C, экстремальные значения дают больше разброса.")
+        st.pyplot(fig_bins)
+
+    st.markdown("### Топ-5 точек с наибольшим отклонением")
+    st.dataframe(top_outliers.style.format({"abs_pct_growth": "{:.1f}%"}))
+
     st.markdown("---")
     st.info(
         "– `m` лучше выбирать по графику RMSE (в боковой панели).\n"
