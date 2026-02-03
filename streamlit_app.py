@@ -24,6 +24,27 @@ COLUMN_RENAMES = {
 SIGMA_TEMP_MIN = 560
 SIGMA_TEMP_MAX = 900
 SIGMA_TEMP_WIDTH = 8
+MAX_PARTICLE_FACTOR = 4
+GRAIN_SIZES_MM = {
+    -7: 4.0,
+    -6: 2.828,
+    -5: 2.0,
+    -4: 1.414,
+    -3: 1.0,
+    -2: 0.707,
+    -1: 0.5,
+    0: 0.354,
+    1: 0.25,
+    2: 0.177,
+    3: 0.125,
+    4: 0.0884,
+    5: 0.0625,
+    6: 0.0442,
+    7: 0.0312,
+    8: 0.0221,
+    9: 0.0156,
+    10: 0.011
+}
 
 
 def sigma_activity(T_K):
@@ -110,6 +131,16 @@ def compute_temp_metrics(T_true, T_pred):
     return {"rmse": rmse}
 
 
+def grain_diameter_um(G):
+    size_mm = GRAIN_SIZES_MM.get(int(round(G)))
+    return size_mm * 1000 if size_mm else 0.1
+
+
+def saturation_factor(D_kin, D_max):
+    width = max(0.1, 0.05 * D_max)
+    return 1.0 / (1.0 + np.exp((D_kin - D_max) / width))
+
+
 def sigma_activity(T_K):
     T_C = T_K - 273.15
     lower = 1.0 / (1.0 + np.exp(-(T_C - SIGMA_TEMP_MIN) / SIGMA_TEMP_WIDTH))
@@ -121,9 +152,12 @@ def compute_predicted_diameter(T_K, tau, G, model, m):
     k0 = model["k0"]
     Q_J = model["Q_J"]
     beta_G = model["beta_G"]
-    gamma = sigma_activity(T_K)
+    gamma_T = sigma_activity(T_K)
     exponent = -Q_J / (R * T_K)
-    return (k0 * gamma * tau * np.exp(beta_G * G) * np.exp(exponent)) ** (1.0 / m)
+    D_kin = k0 * gamma_T * tau * np.exp(beta_G * G) * np.exp(exponent)
+    D_max = MAX_PARTICLE_FACTOR * grain_diameter_um(G)
+    sat = saturation_factor(D_kin, D_max)
+    return (D_kin * sat) ** (1.0 / m)
 
 
 def solve_temperature_for_growth(model, m, D, tau, G):
@@ -198,22 +232,23 @@ def fit_growth_model(df, m, include_predictions=False):
 
 def fit_kG_model(df, include_predictions=False):
     df = df.copy()
+    df["grain_d_um"] = df["G"].apply(grain_diameter_um)
     y = np.log(df["d_equiv_um"])
     X = np.column_stack([
         np.ones(len(df)),
         np.log(df["tau_h"]),
-        np.log(df["G"]),
+        np.log(df["grain_d_um"].replace(0, 0.1)),
         1.0 / df["T_K"],
     ])
     beta, *_ = np.linalg.lstsq(X, y, rcond=None)
-    intercept, beta_tau, gamma, beta_T = beta
+    intercept, beta_tau, beta_d, beta_T = beta
     y_pred = X @ beta
     d_pred = np.exp(y_pred)
     metrics = compute_metrics(df["d_equiv_um"], d_pred)
     model = {
         "intercept": intercept,
         "beta_tau": beta_tau,
-        "gamma": gamma,
+        "beta_d": beta_d,
         "beta_T": beta_T,
         "metric": metrics,
     }
@@ -250,7 +285,8 @@ def estimate_temperature_growth(model, D, tau, G, m):
 def estimate_temperature_kG(model, D, tau, G):
     if model["beta_T"] == 0:
         return None
-    value = math.log(D) - model["intercept"] - model["beta_tau"] * math.log(tau) - model["gamma"] * math.log(G)
+    dG_um = grain_diameter_um(G)
+    value = math.log(D) - model["intercept"] - model["beta_tau"] * math.log(tau) - model["beta_d"] * math.log(dG_um)
     denom = value / model["beta_T"]
     if denom <= 0:
         return None
@@ -367,9 +403,9 @@ def main():
         st.latex(r"D^m = k_0 \cdot e^{-Q/(RT)} \cdot \tau \cdot e^{\beta_G G}")
 
     with col2:
-        st.markdown("### Модель с $k_G$(подгон)")
-        st.markdown(r"Модель: $\ln D = a + b \ln \tau + \gamma \ln G + \beta_T / T$")
-        st.markdown(fr"- $\gamma = {kG_model['gamma']:.3f}$ → $k_G = G^{{{kG_model['gamma']:.3f}}}$")
+        st.markdown("### Модель с $k_G$(предсказанный размер зерна)")
+        st.markdown(r"Модель: $\ln D = a + b \ln \tau + c \ln d_G + \beta_T / T$, где $d_G$ — средний диаметр зерна")
+        st.markdown(fr"- $c = {kG_model['beta_d']:.3f}$ → $k_G \propto d_G^{{{kG_model['beta_d']:.3f}}}$")
         st.markdown(
             fr"""
             - $b = {kG_model['beta_tau']:.3f}$
@@ -467,6 +503,7 @@ def main():
 
     st.subheader("Данные и предсказания")
     display_df = df[["G", "T_C", "tau_h", "d_equiv_um", "c_sigma_pct", "T_K"]].copy()
+    display_df["grain_d_um"] = display_df["G"].apply(grain_diameter_um)
     display_df["D_pred_growth"] = growth_model["D_pred"]
     display_df["D_pred_kG"] = kG_model["D_pred"]
     display_df["T_pred_growth_K"] = growth_model["T_pred_K"]
@@ -506,7 +543,7 @@ def main():
     st.dataframe(styled)
     csv = display_df.to_csv(index=False).encode("utf-8")
     st.download_button("Скачать таблицу с предсказаниями", csv, "predictions.csv", "text/csv")
-    st.markdown("В таблице указаны температуры в °C и процентное отклонение экспериментального диаметра от предсказанного (выделено, если >10%).")
+    st.markdown("В таблице указаны температуры в °C, средний размер зерна (ум) и процентные отклонения. Красным выделены отклонения > 10%." )
 
     df_analysis = display_df.copy()
     df_analysis["error_growth"] = df_analysis["d_equiv_um"] - df_analysis["D_pred_growth"]
@@ -519,6 +556,7 @@ def main():
             mean_abs_pct=("abs_pct_growth", "mean"),
             error_mean=("error_growth", "mean"),
             error_std=("error_growth", "std"),
+            grain_mean=("grain_d_um", "mean"),
         )
         .sort_values("mean_abs_pct")
     )
