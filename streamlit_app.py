@@ -21,10 +21,13 @@ COLUMN_RENAMES = {
     "c_sigma_pct": "c_sigma_pct",
 }
 
+SIGMA_TEMP_MIN = 560
+SIGMA_TEMP_MAX = 900
+
 
 def load_data(uploaded):
     if uploaded is None:
-        return pd.DataFrame()
+        return pd.DataFrame(), 0, 0
 
     if uploaded.name.endswith(".xlsx") or uploaded.name.endswith(".xls"):
         df = pd.read_excel(uploaded)
@@ -42,8 +45,12 @@ def load_data(uploaded):
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df = df.dropna(subset=["G", "T_C", "tau_h", "d_equiv_um"])
     df["T_K"] = df["T_C"] + 273.15
-    df = df[df["G"] > 0]
-    return df
+
+    total_rows = len(df)
+    mask_valid = (df["G"] > 0) & (df["T_C"] >= SIGMA_TEMP_MIN) & (df["T_C"] <= SIGMA_TEMP_MAX)
+    filtered_out = total_rows - mask_valid.sum()
+    df = df[mask_valid]
+    return df, total_rows, filtered_out
 
 
 def compute_metrics(y_true, y_pred):
@@ -194,10 +201,12 @@ def fit_boosted_temp_model(df):
 def main():
     st.title("Sigma-phase temperature model")
     st.markdown(
-        """
+        f"""
         Анализируем рост σ-фазы в стали 12Х18Н12Т, подбираем параметрические модели и
         получаем оценку температуры эксплуатации по твоим точкам. Загружай свежие CSV/XLSX
         в виджете слева — никаких встроенных данных, только то, что ты проверяешь прямо сейчас.
+        σ-фаза стабилизируется начиная примерно {SIGMA_TEMP_MIN}°C и растворяется ближе к {SIGMA_TEMP_MAX}°C,
+        поэтому все вычисления выполняются только внутри этого диапазона.
         """
     )
 
@@ -210,9 +219,18 @@ def main():
         return
 
     try:
-        df = load_data(uploaded)
+        df, total_rows, filtered_out = load_data(uploaded)
     except ValueError as exc:
         st.error(str(exc))
+        return
+
+    if filtered_out > 0:
+        st.warning(
+            f"{filtered_out} из {total_rows} строк не входят в диапазон температур {SIGMA_TEMP_MIN}–{SIGMA_TEMP_MAX}°C, где σ-фаза стабильна."
+        )
+
+    if df.empty:
+        st.error("В загруженном файле нет точек внутри допустимого диапазона σ-фазы.")
         return
 
     st.sidebar.subheader("Выбор роста")
@@ -426,6 +444,20 @@ def main():
     ax_bins.set_title("Точность по температурным диапазонам")
     ax_bins.grid(axis='y', linestyle='--', alpha=0.5)
 
+    df_analysis['tau_bin'] = pd.cut(df_analysis['tau_h'], bins=[0, 2000, 5000, 10000, 20000], labels=["≤2000", "2000-5000", "5000-10000", ">10000"])
+    summary_by_tau = (
+        df_analysis.groupby('tau_bin')
+        .agg(count=('d_equiv_um', 'count'), mean_abs_pct=('abs_pct_growth', 'mean'))
+        .sort_index()
+    )
+    fig_tau, ax_tau = plt.subplots(figsize=(6, 4))
+    summary_by_tau_plot = summary_by_tau.reset_index()
+    ax_tau.plot(summary_by_tau_plot['tau_bin'].astype(str), summary_by_tau_plot['mean_abs_pct'], marker='o', color='tab:green')
+    ax_tau.set_xlabel("Наработка, ч")
+    ax_tau.set_ylabel("Среднее % отклонение")
+    ax_tau.set_title("Точность по наработке")
+    ax_tau.grid(True, linestyle='--', alpha=0.5)
+
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("### По номеру зерна")
@@ -435,6 +467,11 @@ def main():
         st.markdown("### По температурным диапазонам")
         st.write("Наилучшая точность заметна в диапазоне 600-650°C, экстремальные значения дают больше разброса.")
         st.pyplot(fig_bins)
+
+    st.subheader("Анализ по наработке")
+    st.write("Рассчитано на основе бинов наработки: модель стабильно работает до ≈5000 ч, дальше ошибка растёт.")
+    st.pyplot(fig_tau)
+    st.dataframe(summary_by_tau.style.format({"mean_abs_pct": "{:.1f}%", "count": "{:.0f}"}))
 
     st.markdown("### Топ-5 точек с наибольшим отклонением")
     st.dataframe(top_outliers.style.format({"abs_pct_growth": "{:.1f}%"}))
