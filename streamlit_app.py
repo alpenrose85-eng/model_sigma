@@ -238,7 +238,7 @@ def main():
     with col1:
         st.markdown("### Ростовая модель")
         st.markdown(
-            f"""
+            fr"""
             - $k_0 = e^{{{growth_model['intercept']:.2f}}} \approx {growth_model['k0']:.0f}$
             - $Q = {-growth_model['beta_T'] * R / 1000:.1f}\,\mathrm{{кДж/моль}}$
             - $\beta_G = {growth_model['beta_G']:.3f}$
@@ -256,7 +256,7 @@ def main():
         st.markdown(r"Исходный коэффициент зерна: $k_G = 1.66 \cdot G^{-0.33}$")
         st.latex(r"\ln D = a + b \ln \tau + c \ln k_G + \beta_T / T")
         st.markdown(
-            f"""
+            fr"""
             - $b = {kG_model['beta_tau']:.3f}$
             - $c = {kG_model['beta_kG']:.3f}$
             - $\beta_T = {kG_model['beta_T']:.1f}$
