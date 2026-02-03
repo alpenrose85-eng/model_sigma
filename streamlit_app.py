@@ -352,9 +352,40 @@ def main():
     display_df["T_pred_kG_K"] = kG_model["T_pred_K"]
     display_df["T_pred_inverse_K"] = inverse_model["T_pred_K"]
     display_df["T_pred_boosted_K"] = boosted_model["T_pred_K"]
-    st.dataframe(display_df)
+    display_df["T_pred_growth_C"] = display_df["T_pred_growth_K"] - 273.15
+    display_df["T_pred_kG_C"] = display_df["T_pred_kG_K"] - 273.15
+    display_df["T_pred_inverse_C"] = display_df["T_pred_inverse_K"] - 273.15
+    display_df["T_pred_boosted_C"] = display_df["T_pred_boosted_K"] - 273.15
+
+    def percent_error(actual, predicted):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(np.isfinite(predicted) & (predicted != 0), np.abs(actual - predicted) / predicted * 100, np.nan)
+
+    display_df["pct_dev_growth"] = percent_error(display_df["d_equiv_um"], display_df["D_pred_growth"])
+    display_df["pct_dev_kG"] = percent_error(display_df["d_equiv_um"], display_df["D_pred_kG"])
+
+    percent_cols = ["pct_dev_growth", "pct_dev_kG"]
+
+    def highlight_large(val):
+        if pd.isna(val):
+            return ""
+        return "background-color: #ffe8e8" if val > 10 else ""
+
+    styled = display_df.style.format(
+        {
+            "pct_dev_growth": "{:.1f}%",
+            "pct_dev_kG": "{:.1f}%",
+            "T_pred_growth_C": "{:.1f}",
+            "T_pred_kG_C": "{:.1f}",
+            "T_pred_inverse_C": "{:.1f}",
+            "T_pred_boosted_C": "{:.1f}",
+        }
+    ).applymap(highlight_large, subset=percent_cols)
+
+    st.dataframe(styled)
     csv = display_df.to_csv(index=False).encode("utf-8")
     st.download_button("Скачать таблицу с предсказаниями", csv, "predictions.csv", "text/csv")
+    st.markdown("В таблице указаны температуры в °C и процентное отклонение экспериментального диаметра от предсказанного (выделено, если >10%).")
 
     st.markdown("---")
     st.info(
