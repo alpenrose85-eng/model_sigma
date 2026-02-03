@@ -448,14 +448,21 @@ def main():
         T_growth = estimate_temperature_growth(growth_model, d_input, tau_input, G_input, selected_m)
         T_kG = estimate_temperature_kG(kG_model, d_input, tau_input, G_input)
         st.markdown("---")
+        T560 = SIGMA_TEMP_MIN + 273.15
+        required_d = compute_predicted_diameter(T560, tau_input, G_input, {"k0": growth_model["k0"], "beta_G": growth_model["beta_G"], "Q_J": growth_model["Q_J"]}, selected_m)
+        st.write(f"Оценка модели при {SIGMA_TEMP_MIN}°C: $D_{{560}} = {required_d:.3f}\,\mu m$ для заданных G и τ.")
         if T_growth is not None:
             st.write(f"Ростовая модель: $T = {T_growth:.1f}\,K$ ({T_growth - 273.15:.1f} °C)")
         else:
-            st.write("Ростовая модель не дала положительного решения")
+            st.write(
+                "Ростовая модель не дала решения → фактический диаметр меньше расчетного при 560°C, значит сигма-фаза ещё не выросла до указанного размера."
+            )
         if T_kG is not None:
             st.write(f"Модель с $k_G$: $T = {T_kG:.1f}\,K$ ({T_kG - 273.15:.1f} °C)")
         else:
-            st.write("k_G-модель не дала положительного решения")
+            st.write(
+                "k_G-модель не дала решения → для этой точки σ-фаза оценивается ниже 560°C на основе текущей формулы."
+            )
 
     st.subheader("Данные и предсказания")
     display_df = df[["G", "T_C", "tau_h", "d_equiv_um", "c_sigma_pct", "T_K"]].copy()
