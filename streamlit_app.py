@@ -132,8 +132,14 @@ def compute_temp_metrics(T_true, T_pred):
 
 
 def grain_diameter_um(G):
-    size_mm = GRAIN_SIZES_MM.get(int(round(G)))
+    G_int = int(round(float(G)))
+    size_mm = GRAIN_SIZES_MM.get(G_int)
     return size_mm * 1000 if size_mm else 0.1
+
+
+def grain_diameter_um_array(G_arr):
+    G_np = np.array(G_arr, dtype=float)
+    return np.vectorize(grain_diameter_um)(G_np)
 
 
 def saturation_factor(D_kin, D_max):
@@ -155,7 +161,7 @@ def compute_predicted_diameter(T_K, tau, G, model, m):
     gamma_T = sigma_activity(T_K)
     exponent = -Q_J / (R * T_K)
     D_kin = k0 * gamma_T * tau * np.exp(beta_G * G) * np.exp(exponent)
-    D_max = MAX_PARTICLE_FACTOR * grain_diameter_um(G)
+    D_max = MAX_PARTICLE_FACTOR * grain_diameter_um_array(G)
     sat = saturation_factor(D_kin, D_max)
     return (D_kin * sat) ** (1.0 / m)
 
