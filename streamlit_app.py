@@ -143,7 +143,7 @@ def grain_diameter_um_array(G_arr):
 
 
 def saturation_factor(D_kin, D_max):
-    width = max(0.1, 0.05 * D_max)
+    width = np.maximum(0.1, 0.05 * D_max)
     return 1.0 / (1.0 + np.exp((D_kin - D_max) / width))
 
 
