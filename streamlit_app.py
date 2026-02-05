@@ -63,29 +63,6 @@ def compute_predicted_diameter(T_K, tau, G, model, m):
     return (k0 * gamma * tau * np.exp(beta_G * G) * np.exp(exponent)) ** (1.0 / m)
 
 
-def solve_temperature_for_growth(model, m, D, tau, G):
-    def f(T):
-        return compute_predicted_diameter(T, tau, G, model, m) - D
-
-    min_k = SIGMA_TEMP_MIN + 273.15
-    max_k = SIGMA_TEMP_MAX + 273.15
-    f_min = f(min_k)
-    f_max = f(max_k)
-    if np.sign(f_min) == np.sign(f_max):
-        return None
-
-    a, b = min_k, max_k
-    for _ in range(40):
-        mid = 0.5 * (a + b)
-        f_mid = f(mid)
-        if abs(f_mid) < 1e-3:
-            return mid
-        if np.sign(f_mid) == np.sign(f_min):
-            a = mid
-            f_min = f_mid
-        else:
-            b = mid
-    return 0.5 * (a + b)
 
 
 def load_data(uploaded):
@@ -161,14 +138,18 @@ def compute_predicted_diameter(T_K, tau, G, model, m):
     gamma_T = sigma_activity(T_K)
     exponent = -Q_J / (R * T_K)
     D_kin = k0 * gamma_T * tau * np.exp(beta_G * G) * np.exp(exponent)
-    D_max = MAX_PARTICLE_FACTOR * grain_diameter_um_array(G)
-    sat = saturation_factor(D_kin, D_max)
-    return (D_kin * sat) ** (1.0 / m)
+    return D_kin ** (1.0 / m)
+
+
+def apply_saturation(D_kin, G):
+    D_max = MAX_PARTICLE_FACTOR * grain_diameter_um(G)
+    return D_kin * saturation_factor(D_kin, D_max)
 
 
 def solve_temperature_for_growth(model, m, D, tau, G):
     def f(T):
-        return compute_predicted_diameter(T, tau, G, model, m) - D
+        D_kin = compute_predicted_diameter(T, tau, G, model, m)
+        return apply_saturation(D_kin, G) - D
 
     min_k = SIGMA_TEMP_MIN + 273.15
     max_k = SIGMA_TEMP_MAX + 273.15
