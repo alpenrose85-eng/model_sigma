@@ -259,7 +259,7 @@ def fit_kG_model(df, include_predictions=False):
         "metric": metrics,
     }
     if include_predictions:
-        value = np.log(df["d_equiv_um"]) - intercept - beta_tau * np.log(df["tau_h"]) - gamma * np.log(df["G"])
+        value = np.log(df["d_equiv_um"]) - intercept - beta_tau * np.log(df["tau_h"]) - beta_d * np.log(df["grain_d_um"].replace(0, 0.1))
         with np.errstate(divide="ignore", invalid="ignore"):
             denom = value / beta_T
             T_pred = np.where(denom > 0, 1.0 / denom, np.nan)
