@@ -650,6 +650,27 @@ def main():
 
         st.pyplot(fig)
 
+        # График модели D(P) с доверительным интервалом ±15%
+        st.subheader("Рост Dэкв (Аррениус): D(P) с интервалом ±15%")
+        P = df["T_K"] * (np.log10(df["tau_h"]) - 2 * np.log10(df["T_K"]) + 26.3)
+        P_vals = P.values
+        D_model = np.array(growth_model["D_pred"])
+        order = np.argsort(P_vals)
+        P_sorted = P_vals[order]
+        D_sorted = D_model[order]
+        D_low = D_sorted * 0.85
+        D_high = D_sorted * 1.15
+
+        fig_dp, ax_dp = plt.subplots(figsize=(8, 4))
+        ax_dp.plot(P_sorted, D_sorted, color="tab:blue", label="Модель")
+        ax_dp.fill_between(P_sorted, D_low, D_high, color="tab:blue", alpha=0.2, label="±15%")
+        ax_dp.scatter(P_vals, df["d_equiv_um"], color="black", s=20, alpha=0.7, label="Эксперимент")
+        ax_dp.set_xlabel("P = T*(log10 τ − 2 log10 T + 26.3)")
+        ax_dp.set_ylabel("Dэкв, μm")
+        ax_dp.set_title("Модель и экспериментальные точки")
+        ax_dp.legend()
+        st.pyplot(fig_dp)
+
         st.subheader("Температура: предсказания")
         fig_temp, ax_temp = plt.subplots(figsize=(6, 6))
         true_T = df["T_K"]
