@@ -372,11 +372,12 @@ def fit_sigma_fraction_model(df, include_d=False):
 
     rmse_f = math.sqrt(mean_squared_error(f, f_pred))
     rmse_f_pct = rmse_f * 100.0
+    r2_f = r2_score(f, f_pred)
     model["T_pred_K"] = T_pred
     model["f_pred"] = f_pred
     model["f_true"] = f
     model["metrics"] = compute_temp_metrics(df["T_K"].values, T_pred)
-    model["metrics_f"] = {"rmse_frac": rmse_f, "rmse_pct": rmse_f_pct}
+    model["metrics_f"] = {"rmse_frac": rmse_f, "rmse_pct": rmse_f_pct, "r2": r2_f}
     return model
 
 
@@ -559,7 +560,7 @@ def main():
             if sigma_model_basic is not None:
                 st.markdown("**Без диаметра**")
                 st.markdown(
-                    fr"Q ≈ {sigma_model_basic['Q_kJ_per_mol']:.1f} кДж/моль, RMSE T ≈ {sigma_model_basic['metrics']['rmse']:.2f} K, RMSE f ≈ {sigma_model_basic['metrics_f']['rmse_pct']:.2f}%"
+                    fr"Q ≈ {sigma_model_basic['Q_kJ_per_mol']:.1f} кДж/моль, RMSE T ≈ {sigma_model_basic['metrics']['rmse']:.2f} K, RMSE f ≈ {sigma_model_basic['metrics_f']['rmse_pct']:.2f}%, R²(f) ≈ {sigma_model_basic['metrics_f']['r2']:.3f}"
                 )
             else:
                 st.markdown("**Без диаметра**: данных недостаточно")
@@ -567,7 +568,7 @@ def main():
             if sigma_model_with_d is not None:
                 st.markdown("**С диаметром**")
                 st.markdown(
-                    fr"Q ≈ {sigma_model_with_d['Q_kJ_per_mol']:.1f} кДж/моль, RMSE T ≈ {sigma_model_with_d['metrics']['rmse']:.2f} K, RMSE f ≈ {sigma_model_with_d['metrics_f']['rmse_pct']:.2f}%"
+                    fr"Q ≈ {sigma_model_with_d['Q_kJ_per_mol']:.1f} кДж/моль, RMSE T ≈ {sigma_model_with_d['metrics']['rmse']:.2f} K, RMSE f ≈ {sigma_model_with_d['metrics_f']['rmse_pct']:.2f}%, R²(f) ≈ {sigma_model_with_d['metrics_f']['r2']:.3f}"
                 )
             else:
                 st.markdown("**С диаметром**: данных недостаточно")
