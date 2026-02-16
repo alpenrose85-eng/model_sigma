@@ -494,7 +494,19 @@ def main():
             styled_edit = styled_edit.applymap(color_dev, subset=[col])
 
     st.markdown("**Цветная оценка отклонений (|ΔD|, %):**")
-    st.dataframe(styled_edit, use_container_width=True, hide_index=True)
+    styled_display = styled_edit.format(
+        {
+            "ΔD (Рост), μm": "{:.2f}",
+            "|ΔD| Рост, %": "{:.0f}",
+            "ΔD (k_G), μm": "{:.2f}",
+            "|ΔD| k_G, %": "{:.0f}",
+            "d_equiv_um": "{:.3f}",
+            "c_sigma_pct": "{:.3f}",
+        }
+    ).format(
+        lambda v: (str(v).rstrip("0").rstrip(".") if isinstance(v, (int, float, np.floating)) else v)
+    )
+    st.dataframe(styled_display, use_container_width=True, hide_index=True)
 
     st.markdown("**Таблица выбора точек для исключения:**")
     edited = st.data_editor(
