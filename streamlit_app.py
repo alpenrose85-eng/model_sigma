@@ -98,9 +98,10 @@ def compute_metrics(y_true, y_pred):
 def compute_temp_metrics(T_true, T_pred):
     mask = np.isfinite(T_pred)
     if not mask.any():
-        return {"rmse": float("nan")}
+        return {"rmse": float("nan"), "r2": float("nan")}
     rmse = math.sqrt(mean_squared_error(T_true[mask], T_pred[mask]))
-    return {"rmse": rmse}
+    r2 = r2_score(T_true[mask], T_pred[mask])
+    return {"rmse": rmse, "r2": r2}
 
 
 def grain_diameter_um(G):
@@ -548,6 +549,67 @@ def main():
     ax_temp.set_title("Сравнение температурного прогноза")
     ax_temp.legend()
     st.pyplot(fig_temp)
+
+    # Сводная таблица по 4 моделям температуры
+    st.subheader("Сводная таблица качества (4 модели температуры)")
+    def subset_metrics(T_true_K, T_pred_K, mask):
+        if not mask.any():
+            return {"rmse": float("nan"), "r2": float("nan"), "mae": float("nan")}
+        rmse = math.sqrt(mean_squared_error(T_true_K[mask], T_pred_K[mask]))
+        r2 = r2_score(T_true_K[mask], T_pred_K[mask])
+        mae = np.mean(np.abs(T_true_K[mask] - T_pred_K[mask]))
+        return {"rmse": rmse, "r2": r2, "mae": mae}
+
+    T_true_K = df["T_K"].values
+    T_true_C = df["T_C"].values
+    tau = df["tau_h"].values
+    focus_mask = (
+        (T_true_C >= 580) & (T_true_C <= 650) & (tau >= 100000) & (tau <= 300000)
+    )
+
+    models = [
+        ("Ростовая", growth_model["T_pred_K"]),
+        ("k_G", kG_model["T_pred_K"]),
+        ("1/T-регрессия", inverse_model["T_pred_K"]),
+        ("Boosted", boosted_model["T_pred_K"]),
+    ]
+
+    rows = []
+    for name, preds in models:
+        base = subset_metrics(T_true_K, preds, np.isfinite(preds))
+        focus = subset_metrics(T_true_K, preds, np.isfinite(preds) & focus_mask)
+        rows.append(
+            {
+                "Модель": name,
+                "R² (вся выборка)": base["r2"],
+                "RMSE, K (вся выборка)": base["rmse"],
+                "MAE, K (вся выборка)": base["mae"],
+                "R² (580–650°C, 100–300 тыс. ч)": focus["r2"],
+                "RMSE, K (фокус)": focus["rmse"],
+                "MAE, K (фокус)": focus["mae"],
+                "N (фокус)": int((np.isfinite(preds) & focus_mask).sum()),
+            }
+        )
+
+    summary_df = pd.DataFrame(rows)
+    st.dataframe(
+        summary_df.style.format(
+            {
+                "R² (вся выборка)": "{:.3f}",
+                "RMSE, K (вся выборка)": "{:.1f}",
+                "MAE, K (вся выборка)": "{:.1f}",
+                "R² (580–650°C, 100–300 тыс. ч)": "{:.3f}",
+                "RMSE, K (фокус)": "{:.1f}",
+                "MAE, K (фокус)": "{:.1f}",
+            }
+        )
+    )
+
+    st.caption(
+        "R² — коэффициент достоверности аппроксимации (ближе к 1 — лучше). "
+        "RMSE — среднеквадратичное отклонение в К; MAE — средняя абсолютная ошибка. "
+        "Фокус‑метрики рассчитаны для диапазона 580–650°C и наработки 100–300 тыс. ч."
+    )
 
     st.subheader("Модель по %σ-фазы (JMAK)")
     if sigma_model_basic is None and sigma_model_with_d is None:
