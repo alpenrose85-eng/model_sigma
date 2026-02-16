@@ -480,8 +480,13 @@ def main():
                 return "background-color: #fff3cd"
             return "background-color: #f8d7da"
         styled_edit = styled_edit.applymap(color_dev, subset=["|ΔD|, %"])
+
+    st.markdown("**Цветная оценка отклонений (|ΔD|, %):**")
+    st.dataframe(styled_edit, use_container_width=True, hide_index=True)
+
+    st.markdown("**Таблица выбора точек для исключения:**")
     edited = st.data_editor(
-        styled_edit,
+        df_edit,
         use_container_width=True,
         num_rows="fixed",
         hide_index=True,
