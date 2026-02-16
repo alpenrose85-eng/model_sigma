@@ -456,30 +456,42 @@ def main():
 
     # Быстрое исключение точек (с подсказкой отклонений по ростовой модели)
     temp_growth = fit_growth_model(df, selected_m, include_predictions=True)
+    temp_kG = fit_kG_model(df, include_predictions=True)
     df_edit = df[["G", "T_C", "tau_h", "d_equiv_um", "c_sigma_pct"]].copy()
     df_edit.insert(0, "exclude", False)
     df_edit["row_id"] = df_edit.index.astype(int)
+
     if temp_growth.get("D_pred") is not None:
-        df_edit["ΔD, μm"] = (df_edit["d_equiv_um"].values - temp_growth["D_pred"]).round(3)
-        df_edit["|ΔD|, μm"] = np.abs(df_edit["ΔD, μm"]).round(3)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            df_edit["|ΔD|, %"] = (
-                np.abs(df_edit["ΔD, μm"].values) / df_edit["d_equiv_um"].values * 100
-            )
-            df_edit["|ΔD|, %"] = df_edit["|ΔD|, %"].replace([np.inf, -np.inf], np.nan)
+        df_edit["ΔD (Рост), μm"] = (df_edit["d_equiv_um"].values - temp_growth["D_pred"]).round(3)
+        df_edit["|ΔD| Рост, %"] = (
+            np.abs(df_edit["ΔD (Рост), μm"].values) / df_edit["d_equiv_um"].values * 100
+        )
+
+    if temp_kG.get("D_pred") is not None:
+        df_edit["ΔD (k_G), μm"] = (df_edit["d_equiv_um"].values - temp_kG["D_pred"]).round(3)
+        df_edit["|ΔD| k_G, %"] = (
+            np.abs(df_edit["ΔD (k_G), μm"].values) / df_edit["d_equiv_um"].values * 100
+        )
+
+    for col in ["|ΔD| Рост, %", "|ΔD| k_G, %"]:
+        if col in df_edit.columns:
+            df_edit[col] = df_edit[col].replace([np.inf, -np.inf], np.nan)
 
     st.subheader("Фильтр данных (исключение точек)")
     styled_edit = df_edit.style
-    if "|ΔD|, %" in df_edit.columns:
-        def color_dev(v):
-            if pd.isna(v):
-                return ""
-            if v <= 15:
-                return "background-color: #dff5e1"
-            if v <= 25:
-                return "background-color: #fff3cd"
-            return "background-color: #f8d7da"
-        styled_edit = styled_edit.applymap(color_dev, subset=["|ΔD|, %"])
+
+    def color_dev(v):
+        if pd.isna(v):
+            return ""
+        if v <= 15:
+            return "background-color: #dff5e1"
+        if v <= 25:
+            return "background-color: #fff3cd"
+        return "background-color: #f8d7da"
+
+    for col in ["|ΔD| Рост, %", "|ΔD| k_G, %"]:
+        if col in df_edit.columns:
+            styled_edit = styled_edit.applymap(color_dev, subset=[col])
 
     st.markdown("**Цветная оценка отклонений (|ΔD|, %):**")
     st.dataframe(styled_edit, use_container_width=True, hide_index=True)
