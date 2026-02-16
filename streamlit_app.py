@@ -167,10 +167,14 @@ def solve_temperature_for_growth(model, m, D, tau, G):
     return 0.5 * (a + b)
 
 
-def clamp_temperature(T_arr):
+def clamp_temperature(T_arr, return_bounds=False):
     min_K = SIGMA_TEMP_MIN + 273.15
     max_K = SIGMA_TEMP_MAX + 273.15
-    return np.where((T_arr >= min_K) & (T_arr <= max_K), T_arr, np.nan)
+    if not return_bounds:
+        return np.where((T_arr >= min_K) & (T_arr <= max_K), T_arr, np.nan)
+    flags = np.where(T_arr < min_K, -1, np.where(T_arr > max_K, 1, 0))
+    T_out = np.where((T_arr >= min_K) & (T_arr <= max_K), T_arr, np.nan)
+    return T_out, flags
 
 
 def fit_growth_model(df, m, include_predictions=False):
@@ -258,9 +262,9 @@ def estimate_temperature_growth(model, D, tau, G, m):
     if denom <= 0:
         return None
     T_val = 1.0 / denom
-    T_arr = clamp_temperature(np.array([T_val]))
+    T_arr, flags = clamp_temperature(np.array([T_val]), return_bounds=True)
     if not np.isfinite(T_arr[0]):
-        return None
+        return "below" if flags[0] < 0 else "above"
     return float(T_arr[0])
 
 
@@ -273,9 +277,9 @@ def estimate_temperature_kG(model, D, tau, G):
     if denom <= 0:
         return None
     T_val = 1.0 / denom
-    T_arr = clamp_temperature(np.array([T_val]))
+    T_arr, flags = clamp_temperature(np.array([T_val]), return_bounds=True)
     if not np.isfinite(T_arr[0]):
-        return None
+        return "below" if flags[0] < 0 else "above"
     return float(T_arr[0])
 
 
@@ -403,9 +407,9 @@ def estimate_temperature_sigma(model, f_sigma, tau, G, D=None):
     if denom <= 0:
         return None
     T_val = 1.0 / denom
-    T_arr = clamp_temperature(np.array([T_val]))
+    T_arr, flags = clamp_temperature(np.array([T_val]), return_bounds=True)
     if not np.isfinite(T_arr[0]):
-        return None
+        return "below" if flags[0] < 0 else "above"
     return float(T_arr[0])
 
 
@@ -992,6 +996,10 @@ def main():
             T4 = estimate_temperature_sigma(sigma_model_with_d, c_sigma_calc/100.0, tau_calc, G_calc, d_input_calc)
             st.markdown("**Результаты (K / °C):**")
             def fmt(T):
+                if T == "below":
+                    return "< 560°C"
+                if T == "above":
+                    return "> 900°C"
                 return "—" if T is None else f"{T:.1f} K ({T-273.15:.1f} °C)"
             st.write(f"Рост Dэкв (Аррениус): {fmt(T1)}")
             st.write(f"Рост k_G (зерно): {fmt(T2)}")
