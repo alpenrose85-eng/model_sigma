@@ -24,6 +24,7 @@ SIGMA_TEMP_MIN = 560
 SIGMA_TEMP_MAX = 900
 SIGMA_TEMP_WIDTH = 8
 MAX_PARTICLE_FACTOR = 4
+SIGMA_F_MAX = 0.18  # максимальная доля σ-фазы (18%)
 
 GRAIN_SIZES_MM = {
     -7: 4.0,
@@ -319,8 +320,8 @@ def predict_sigma_fraction(model, tau, G, T_K, D=None):
         + (model["beta_d"] * np.log(D) if D is not None else 0.0)
         + model["beta_T"] * (1.0 / T_K)
     )
-    f_pred = 1.0 - np.exp(-np.exp(y_pred))
-    return f_pred
+    f_norm = 1.0 - np.exp(-np.exp(y_pred))
+    return SIGMA_F_MAX * f_norm
 
 
 def fit_sigma_fraction_model(df, include_d=False):
@@ -330,7 +331,9 @@ def fit_sigma_fraction_model(df, include_d=False):
     if df.empty:
         return None
     f = df["c_sigma_pct"].values / 100.0
-    y = np.log(-np.log(1.0 - f))
+    f = np.minimum(f, SIGMA_F_MAX)
+    f_norm = f / SIGMA_F_MAX
+    y = np.log(-np.log(1.0 - f_norm))
     X_cols = [np.ones(len(df)), np.log(df["tau_h"]), df["G"], 1.0 / df["T_K"]]
     if include_d:
         X_cols.insert(3, np.log(df["d_equiv_um"]))
@@ -380,9 +383,13 @@ def fit_sigma_fraction_model(df, include_d=False):
 def estimate_temperature_sigma(model, f_sigma, tau, G, D=None):
     if model is None:
         return None
-    if f_sigma <= 0 or f_sigma >= 1:
+    if f_sigma <= 0:
         return None
-    y = math.log(-math.log(1.0 - f_sigma))
+    f_sigma = min(f_sigma, SIGMA_F_MAX)
+    f_norm = f_sigma / SIGMA_F_MAX
+    if f_norm >= 1:
+        return None
+    y = math.log(-math.log(1.0 - f_norm))
     value = (
         model["intercept"]
         + model["beta_tau"] * math.log(tau)
@@ -545,8 +552,8 @@ def main():
     if sigma_model_basic is None and sigma_model_with_d is None:
         st.info("Нет валидных строк с c_sigma_pct (0–100%) для построения модели %σ.")
     else:
-        st.latex(r"f_{\sigma} = 1 - \exp[-k(T)\,\tau^{n}]\quad,\quad k(T)=k_0\exp(-Q/RT)")
-        st.latex(r"\ln[-\ln(1-f_{\sigma})] = a + b\ln\tau + cG + d\ln D + \beta_T/T")
+        st.latex(r"f_{\sigma}^{max}=0.18,\quad f_{\sigma}=f_{\sigma}^{max}\left(1-\exp[-k(T)\,\tau^{n}]\right)")
+        st.latex(r"\ln\left[-\ln\left(1-\frac{f_{\sigma}}{f_{\sigma}^{max}}\right)\right]= a + b\ln\tau + cG + d\ln D + \beta_T/T")
         col_s1, col_s2 = st.columns(2)
         with col_s1:
             if sigma_model_basic is not None:
@@ -567,15 +574,20 @@ def main():
 
         # Графики и выбросы
         fig_sig, ax_sig = plt.subplots(1, 2, figsize=(10, 4))
+        max_pct = SIGMA_F_MAX * 100
         if sigma_model_basic is not None:
             ax_sig[0].scatter(sigma_model_basic["f_true"] * 100, sigma_model_basic["f_pred"] * 100, color="tab:blue", alpha=0.7)
-            ax_sig[0].plot([0, 100], [0, 100], linestyle="--", color="gray")
+            ax_sig[0].plot([0, max_pct], [0, max_pct], linestyle="--", color="gray")
+            ax_sig[0].set_xlim(0, max_pct)
+            ax_sig[0].set_ylim(0, max_pct)
             ax_sig[0].set_title("%σ: факт vs прогноз (без D)")
             ax_sig[0].set_xlabel("Факт, %")
             ax_sig[0].set_ylabel("Прогноз, %")
         if sigma_model_with_d is not None:
             ax_sig[1].scatter(sigma_model_with_d["f_true"] * 100, sigma_model_with_d["f_pred"] * 100, color="tab:orange", alpha=0.7)
-            ax_sig[1].plot([0, 100], [0, 100], linestyle="--", color="gray")
+            ax_sig[1].plot([0, max_pct], [0, max_pct], linestyle="--", color="gray")
+            ax_sig[1].set_xlim(0, max_pct)
+            ax_sig[1].set_ylim(0, max_pct)
             ax_sig[1].set_title("%σ: факт vs прогноз (с D)")
             ax_sig[1].set_xlabel("Факт, %")
             ax_sig[1].set_ylabel("Прогноз, %")
@@ -609,7 +621,7 @@ def main():
         with col_c:
             d_input = st.number_input("D, мкм", min_value=0.1, value=1.8, format="%.3f")
         with col_d:
-            c_sigma_input = st.number_input("σ-фаза, %", min_value=0.1, value=5.0, format="%.2f")
+            c_sigma_input = st.number_input("σ-фаза, %", min_value=0.1, max_value=SIGMA_F_MAX * 100, value=5.0, format="%.2f")
         submitted = st.form_submit_button("Оценить температуру")
 
     if submitted:
