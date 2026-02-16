@@ -497,40 +497,41 @@ def render_analysis(df, selected_m):
         focus = subset_metrics_D(df["d_equiv_um"].values, preds, focus_mask) if n_focus >= 2 else {"rmse": float("nan"), "r2": float("nan"), "mae": float("nan")}
         render_analysis(df, selected_m)
         G_sel = st.selectbox("Номер зерна", sorted(df["G"].unique()))
-    tab1, tab2, tab3 = st.tabs(["Анализ", "По зерну", "Калькулятор"])
-    with tab1:
-        render_analysis(df, selected_m)
-    with tab2:
-        G_sel = st.selectbox("Номер зерна", sorted(df["G"].unique()))
-        df_g = df[df["G"] == G_sel].copy()
-        if df_g.empty:
-            st.info("Нет точек для выбранного номера зерна")
-        else:
-            render_analysis(df_g, selected_m)
-    with tab3:
-        st.markdown("Введите данные и получите температуру по 4 моделям")
-        col1, col2 = st.columns(2)
-        with col1:
-            d_input_calc = st.number_input("D, мкм", min_value=0.1, value=1.5, format="%.3f", key="calc_d")
-            c_sigma_calc = st.number_input("σ‑фаза, % (для JMAK)", min_value=0.1, max_value=SIGMA_F_MAX*100, value=5.0, format="%.2f", key="calc_sigma")
-        with col2:
-            tau_calc = st.number_input("τ, часы", min_value=1.0, value=5000.0, format="%.1f", key="calc_tau")
-            G_calc = st.number_input("G (номер зерна)", min_value=1.0, value=8.0, format="%.1f", key="calc_g")
-        if st.button("Рассчитать", key="calc_btn"):
-            T1 = estimate_temperature_growth(growth_model, d_input_calc, tau_calc, G_calc, selected_m)
-            T2 = estimate_temperature_kG(kG_model, d_input_calc, tau_calc, G_calc)
-            T3 = estimate_temperature_sigma(sigma_model_basic, c_sigma_calc/100.0, tau_calc, G_calc, None)
-            T4 = estimate_temperature_sigma(sigma_model_with_d, c_sigma_calc/100.0, tau_calc, G_calc, d_input_calc)
-            st.markdown("**Результаты (K / °C):**")
-            def fmt(T):
-                if T == "below":
-                    return "< 560°C"
-                if T == "above":
-                    return "> 900°C"
-                return "—" if T is None else f"{T:.1f} K ({T-273.15:.1f} °C)"
-            st.write(f"Рост Dэкв (Аррениус): {fmt(T1)}")
-            st.write(f"Рост k_G (зерно): {fmt(T2)}")
-            st.write(f"JMAK без D: {fmt(T3)}")
-            st.write(f"JMAK с D: {fmt(T4)}")
+def main():
+        tab1, tab2, tab3 = st.tabs(["Анализ", "По зерну", "Калькулятор"])
+        with tab1:
+            render_analysis(df, selected_m)
+        with tab2:
+            G_sel = st.selectbox("Номер зерна", sorted(df["G"].unique()))
+            df_g = df[df["G"] == G_sel].copy()
+            if df_g.empty:
+                st.info("Нет точек для выбранного номера зерна")
+            else:
+                render_analysis(df_g, selected_m)
+        with tab3:
+            st.markdown("Введите данные и получите температуру по 4 моделям")
+            col1, col2 = st.columns(2)
+            with col1:
+                d_input_calc = st.number_input("D, мкм", min_value=0.1, value=1.5, format="%.3f", key="calc_d")
+                c_sigma_calc = st.number_input("σ‑фаза, % (для JMAK)", min_value=0.1, max_value=SIGMA_F_MAX*100, value=5.0, format="%.2f", key="calc_sigma")
+            with col2:
+                tau_calc = st.number_input("τ, часы", min_value=1.0, value=5000.0, format="%.1f", key="calc_tau")
+                G_calc = st.number_input("G (номер зерна)", min_value=1.0, value=8.0, format="%.1f", key="calc_g")
+            if st.button("Рассчитать", key="calc_btn"):
+                T1 = estimate_temperature_growth(growth_model, d_input_calc, tau_calc, G_calc, selected_m)
+                T2 = estimate_temperature_kG(kG_model, d_input_calc, tau_calc, G_calc)
+                T3 = estimate_temperature_sigma(sigma_model_basic, c_sigma_calc/100.0, tau_calc, G_calc, None)
+                T4 = estimate_temperature_sigma(sigma_model_with_d, c_sigma_calc/100.0, tau_calc, G_calc, d_input_calc)
+                st.markdown("**Результаты (K / °C):**")
+                def fmt(T):
+                    if T == "below":
+                        return "< 560°C"
+                    if T == "above":
+                        return "> 900°C"
+                    return "—" if T is None else f"{T:.1f} K ({T-273.15:.1f} °C)"
+                st.write(f"Рост Dэкв (Аррениус): {fmt(T1)}")
+                st.write(f"Рост k_G (зерно): {fmt(T2)}")
+                st.write(f"JMAK без D: {fmt(T3)}")
+                st.write(f"JMAK с D: {fmt(T4)}")
 if __name__ == "__main__":
     main()
