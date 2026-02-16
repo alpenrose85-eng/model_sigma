@@ -367,7 +367,10 @@ def fit_sigma_fraction_model(df, include_d=False):
         f, df["tau_h"], df["G"], df["d_equiv_um"]
     ):
         T_est = estimate_temperature_sigma(model, f_val, tau_val, G_val, d_val if include_d else None)
-        T_pred.append(np.nan if T_est is None else T_est)
+        if T_est in ("below", "above"):
+            T_pred.append(np.nan)
+        else:
+            T_pred.append(np.nan if T_est is None else T_est)
     T_pred = np.array(T_pred, dtype=float)
 
     # предсказание f на обучающей выборке
