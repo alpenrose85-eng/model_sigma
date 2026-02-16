@@ -498,40 +498,92 @@ def render_analysis(df, selected_m):
         render_analysis(df, selected_m)
         G_sel = st.selectbox("Номер зерна", sorted(df["G"].unique()))
 def main():
-        tab1, tab2, tab3 = st.tabs(["Анализ", "По зерну", "Калькулятор"])
-        with tab1:
-            render_analysis(df, selected_m)
-        with tab2:
-            G_sel = st.selectbox("Номер зерна", sorted(df["G"].unique()))
-            df_g = df[df["G"] == G_sel].copy()
-            if df_g.empty:
-                st.info("Нет точек для выбранного номера зерна")
-            else:
-                render_analysis(df_g, selected_m)
-        with tab3:
-            st.markdown("Введите данные и получите температуру по 4 моделям")
-            col1, col2 = st.columns(2)
-            with col1:
-                d_input_calc = st.number_input("D, мкм", min_value=0.1, value=1.5, format="%.3f", key="calc_d")
-                c_sigma_calc = st.number_input("σ‑фаза, % (для JMAK)", min_value=0.1, max_value=SIGMA_F_MAX*100, value=5.0, format="%.2f", key="calc_sigma")
-            with col2:
-                tau_calc = st.number_input("τ, часы", min_value=1.0, value=5000.0, format="%.1f", key="calc_tau")
-                G_calc = st.number_input("G (номер зерна)", min_value=1.0, value=8.0, format="%.1f", key="calc_g")
-            if st.button("Рассчитать", key="calc_btn"):
-                T1 = estimate_temperature_growth(growth_model, d_input_calc, tau_calc, G_calc, selected_m)
-                T2 = estimate_temperature_kG(kG_model, d_input_calc, tau_calc, G_calc)
-                T3 = estimate_temperature_sigma(sigma_model_basic, c_sigma_calc/100.0, tau_calc, G_calc, None)
-                T4 = estimate_temperature_sigma(sigma_model_with_d, c_sigma_calc/100.0, tau_calc, G_calc, d_input_calc)
-                st.markdown("**Результаты (K / °C):**")
-                def fmt(T):
-                    if T == "below":
-                        return "< 560°C"
-                    if T == "above":
-                        return "> 900°C"
-                    return "—" if T is None else f"{T:.1f} K ({T-273.15:.1f} °C)"
-                st.write(f"Рост Dэкв (Аррениус): {fmt(T1)}")
-                st.write(f"Рост k_G (зерно): {fmt(T2)}")
-                st.write(f"JMAK без D: {fmt(T3)}")
-                st.write(f"JMAK с D: {fmt(T4)}")
+    st.title("Sigma-phase temperature model")
+    st.markdown(
+        f"""
+        Анализируем рост σ-фазы в стали 12Х18Н12Т, подбираем параметрические модели и
+        получаем оценку температуры эксплуатации по твоим точкам. Загружай свежие CSV/XLSX
+        в виджете слева — никаких встроенных данных, только то, что ты проверяешь прямо сейчас.
+        σ-фаза стабилизируется начиная примерно {SIGMA_TEMP_MIN}°C и растворяется ближе к
+        {SIGMA_TEMP_MAX}°C, поэтому все вычисления выполняются только внутри этого диапазона.
+        """
+    )
+
+    with st.sidebar.expander("Загрузка данных"):
+        uploaded = st.file_uploader("Загрузи CSV или Excel с измерениями", type=["csv", "xlsx", "xls"])
+        st.caption("Обязательно: G, T_C, tau_h, dэкв_мкм; c_sigma_pct опционально")
+
+    if uploaded is None:
+        st.info("Загрузи файл с новыми экспериментальными точками — после загрузки появятся модели и графики.")
+        return
+
+    try:
+        df, total_rows, filtered_out = load_data(uploaded)
+    except ValueError as exc:
+        st.error(str(exc))
+        return
+
+    if filtered_out > 0:
+        st.warning(
+            f"{filtered_out} из {total_rows} строк не входят в диапазон температур {SIGMA_TEMP_MIN}–{SIGMA_TEMP_MAX}°C, где σ-фаза стабильна."
+        )
+    if df.empty:
+        st.error("В загруженном файле нет точек внутри допустимого диапазона σ-фазы.")
+        return
+
+    st.sidebar.subheader("Выбор роста")
+    m_candidates = np.round(np.linspace(1.0, 3.0, 21), 2)
+    rmse_by_m = []
+    for m_val in m_candidates:
+        result = fit_growth_model(df, m_val, include_predictions=False)
+        rmse_by_m.append(result["metric"]["rmse"])
+    best_m = float(m_candidates[int(np.argmin(rmse_by_m))])
+    st.sidebar.text(f"Лучший RMSE в μм → m ≈ {best_m:.2f}")
+    selected_m = st.sidebar.slider("Экспонента роста m", 1.0, 3.0, best_m, step=0.1)
+    st.sidebar.markdown("---")
+    st.sidebar.caption("Чтобы подставить исторические точки, обнови файл и перезапусти приложение.")
+
+    # модели для калькулятора (по всей выборке)
+    growth_model = fit_growth_model(df, selected_m, include_predictions=True)
+    kG_model = fit_kG_model(df, include_predictions=True)
+    sigma_model_basic = fit_sigma_fraction_model(df, include_d=False)
+    sigma_model_with_d = fit_sigma_fraction_model(df, include_d=True)
+
+    tab1, tab2, tab3 = st.tabs(["Анализ", "По зерну", "Калькулятор"])
+    with tab1:
+        render_analysis(df, selected_m)
+    with tab2:
+        G_sel = st.selectbox("Номер зерна", sorted(df["G"].unique()))
+        df_g = df[df["G"] == G_sel].copy()
+        if df_g.empty:
+            st.info("Нет точек для выбранного номера зерна")
+        else:
+            render_analysis(df_g, selected_m)
+    with tab3:
+        st.markdown("Введите данные и получите температуру по 4 моделям")
+        col1, col2 = st.columns(2)
+        with col1:
+            d_input_calc = st.number_input("D, мкм", min_value=0.1, value=1.5, format="%.3f", key="calc_d")
+            c_sigma_calc = st.number_input("σ‑фаза, % (для JMAK)", min_value=0.1, max_value=SIGMA_F_MAX*100, value=5.0, format="%.2f", key="calc_sigma")
+        with col2:
+            tau_calc = st.number_input("τ, часы", min_value=1.0, value=5000.0, format="%.1f", key="calc_tau")
+            G_calc = st.number_input("G (номер зерна)", min_value=1.0, value=8.0, format="%.1f", key="calc_g")
+        if st.button("Рассчитать", key="calc_btn"):
+            T1 = estimate_temperature_growth(growth_model, d_input_calc, tau_calc, G_calc, selected_m)
+            T2 = estimate_temperature_kG(kG_model, d_input_calc, tau_calc, G_calc)
+            T3 = estimate_temperature_sigma(sigma_model_basic, c_sigma_calc/100.0, tau_calc, G_calc, None)
+            T4 = estimate_temperature_sigma(sigma_model_with_d, c_sigma_calc/100.0, tau_calc, G_calc, d_input_calc)
+            st.markdown("**Результаты (K / °C):**")
+            def fmt(T):
+                if T == "below":
+                    return "< 560°C"
+                if T == "above":
+                    return "> 900°C"
+                return "—" if T is None else f"{T:.1f} K ({T-273.15:.1f} °C)"
+            st.write(f"Рост Dэкв (Аррениус): {fmt(T1)}")
+            st.write(f"Рост k_G (зерно): {fmt(T2)}")
+            st.write(f"JMAK без D: {fmt(T3)}")
+            st.write(f"JMAK с D: {fmt(T4)}")
+
 if __name__ == "__main__":
     main()
