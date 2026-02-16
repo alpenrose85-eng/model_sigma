@@ -1,6 +1,5 @@
 import math
 from pathlib import Path
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -25,6 +24,7 @@ SIGMA_TEMP_MIN = 560
 SIGMA_TEMP_MAX = 900
 SIGMA_TEMP_WIDTH = 8
 MAX_PARTICLE_FACTOR = 4
+
 GRAIN_SIZES_MM = {
     -7: 4.0,
     -6: 2.828,
@@ -43,7 +43,7 @@ GRAIN_SIZES_MM = {
     7: 0.0312,
     8: 0.0221,
     9: 0.0156,
-    10: 0.011
+    10: 0.011,
 }
 
 
@@ -63,29 +63,23 @@ def compute_predicted_diameter(T_K, tau, G, model, m):
     return (k0 * gamma * tau * np.exp(beta_G * G) * np.exp(exponent)) ** (1.0 / m)
 
 
-
-
 def load_data(uploaded):
     if uploaded is None:
         return pd.DataFrame(), 0, 0
-
     if uploaded.name.endswith(".xlsx") or uploaded.name.endswith(".xls"):
         df = pd.read_excel(uploaded)
     else:
         df = pd.read_csv(uploaded)
-
     df = df.rename(columns=COLUMN_RENAMES)
     expected = set(COLUMN_RENAMES.values())
     missing = expected - set(df.columns)
     if missing:
         raise ValueError(f"В файле не хватает колонок: {', '.join(missing)}")
-
     df = df[list(expected)].copy()
     for col in ["G", "T_C", "tau_h", "d_equiv_um", "c_sigma_pct"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df = df.dropna(subset=["G", "T_C", "tau_h", "d_equiv_um"])
     df["T_K"] = df["T_C"] + 273.15
-
     total_rows = len(df)
     mask_valid = (df["G"] > 0) & (df["T_C"] >= SIGMA_TEMP_MIN) & (df["T_C"] <= SIGMA_TEMP_MAX)
     filtered_out = total_rows - mask_valid.sum()
@@ -157,7 +151,6 @@ def solve_temperature_for_growth(model, m, D, tau, G):
     f_max = f(max_k)
     if np.sign(f_min) == np.sign(f_max):
         return None
-
     a, b = min_k, max_k
     for _ in range(40):
         mid = 0.5 * (a + b)
@@ -318,6 +311,70 @@ def fit_boosted_temp_model(df):
     }
 
 
+def fit_sigma_fraction_model(df, include_d=False):
+    df = df.copy()
+    df = df[df["c_sigma_pct"].notna()].copy()
+    df = df[(df["c_sigma_pct"] > 0) & (df["c_sigma_pct"] < 100)]
+    if df.empty:
+        return None
+    f = df["c_sigma_pct"].values / 100.0
+    y = np.log(-np.log(1.0 - f))
+    X_cols = [np.ones(len(df)), np.log(df["tau_h"]), df["G"], 1.0 / df["T_K"]]
+    if include_d:
+        X_cols.insert(3, np.log(df["d_equiv_um"]))
+    X = np.column_stack(X_cols)
+    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+
+    if include_d:
+        intercept, beta_tau, beta_G, beta_d, beta_T = beta
+    else:
+        intercept, beta_tau, beta_G, beta_T = beta
+        beta_d = 0.0
+
+    model = {
+        "intercept": intercept,
+        "beta_tau": beta_tau,
+        "beta_G": beta_G,
+        "beta_d": beta_d,
+        "beta_T": beta_T,
+        "Q_kJ_per_mol": (-beta_T * R) / 1000.0,
+    }
+
+    # предсказание температуры на обучающей выборке
+    T_pred = []
+    for f_val, tau_val, G_val, d_val in zip(
+        f, df["tau_h"], df["G"], df["d_equiv_um"]
+    ):
+        T_est = estimate_temperature_sigma(model, f_val, tau_val, G_val, d_val if include_d else None)
+        T_pred.append(np.nan if T_est is None else T_est)
+    T_pred = np.array(T_pred, dtype=float)
+    model["T_pred_K"] = T_pred
+    model["metrics"] = compute_temp_metrics(df["T_K"].values, T_pred)
+    return model
+
+
+def estimate_temperature_sigma(model, f_sigma, tau, G, D=None):
+    if model is None:
+        return None
+    if f_sigma <= 0 or f_sigma >= 1:
+        return None
+    y = math.log(-math.log(1.0 - f_sigma))
+    value = (
+        model["intercept"]
+        + model["beta_tau"] * math.log(tau)
+        + model["beta_G"] * G
+        + (model["beta_d"] * math.log(D) if D is not None and D > 0 else 0.0)
+    )
+    denom = (y - value) / model["beta_T"]
+    if denom <= 0:
+        return None
+    T_val = 1.0 / denom
+    T_arr = clamp_temperature(np.array([T_val]))
+    if not np.isfinite(T_arr[0]):
+        return None
+    return float(T_arr[0])
+
+
 def main():
     st.title("Sigma-phase temperature model")
     st.markdown(
@@ -325,8 +382,8 @@ def main():
         Анализируем рост σ-фазы в стали 12Х18Н12Т, подбираем параметрические модели и
         получаем оценку температуры эксплуатации по твоим точкам. Загружай свежие CSV/XLSX
         в виджете слева — никаких встроенных данных, только то, что ты проверяешь прямо сейчас.
-        σ-фаза стабилизируется начиная примерно {SIGMA_TEMP_MIN}°C и растворяется ближе к {SIGMA_TEMP_MAX}°C,
-        поэтому все вычисления выполняются только внутри этого диапазона.
+        σ-фаза стабилизируется начиная примерно {SIGMA_TEMP_MIN}°C и растворяется ближе к
+        {SIGMA_TEMP_MAX}°C, поэтому все вычисления выполняются только внутри этого диапазона.
         """
     )
 
@@ -348,7 +405,6 @@ def main():
         st.warning(
             f"{filtered_out} из {total_rows} строк не входят в диапазон температур {SIGMA_TEMP_MIN}–{SIGMA_TEMP_MAX}°C, где σ-фаза стабильна."
         )
-
     if df.empty:
         st.error("В загруженном файле нет точек внутри допустимого диапазона σ-фазы.")
         return
@@ -362,7 +418,6 @@ def main():
     best_m = float(m_candidates[int(np.argmin(rmse_by_m))])
     st.sidebar.text(f"Лучший RMSE в μм → m ≈ {best_m:.2f}")
     selected_m = st.sidebar.slider("Экспонента роста m", 1.0, 3.0, best_m, step=0.1)
-
     st.sidebar.markdown("---")
     st.sidebar.caption("Чтобы подставить исторические точки, обнови файл и перезапусти приложение.")
 
@@ -370,6 +425,9 @@ def main():
     kG_model = fit_kG_model(df, include_predictions=True)
     inverse_model = fit_inverse_temp_model(df)
     boosted_model = fit_boosted_temp_model(df)
+
+    sigma_model_basic = fit_sigma_fraction_model(df, include_d=False)
+    sigma_model_with_d = fit_sigma_fraction_model(df, include_d=True)
 
     st.subheader("Параметры моделей")
     col1, col2 = st.columns(2)
@@ -392,9 +450,9 @@ def main():
     with col2:
         st.markdown("### Модель с $k_G$(предсказанный размер зерна)")
         st.markdown(r"Модель: $\ln D = a + b \ln \tau + c \ln d_G + \beta_T / T$, где $d_G$ — средний диаметр зерна")
-        st.markdown(fr"- $c = {kG_model['beta_d']:.3f}$ → $k_G \propto d_G^{{{kG_model['beta_d']:.3f}}}$")
         st.markdown(
             fr"""
+            - $c = {kG_model['beta_d']:.3f}$ → $k_G \propto d_G^{{{kG_model['beta_d']:.3f}}}$
             - $b = {kG_model['beta_tau']:.3f}$
             - $\beta_T = {kG_model['beta_T']:.1f}$
             - $\mathrm{{RMSE}}(D) = {kG_model['metric']['rmse']:.3f}\,\mu\mathrm{{m}}$
@@ -411,6 +469,7 @@ def main():
         st.markdown("### Модель по 1/T")
         st.markdown("$\frac{1}{T} = a + b\ln D + c\ln\tau + dG + e\ln c_{\sigma}$")
         st.markdown(f"- RMSE T: {inverse_model['metrics']['rmse']:.2f}\,K")
+
     with col4:
         st.markdown("### Градиентный бустинг")
         st.markdown("Функция: $T = f(D, \tau, G, c_{\sigma})$")
@@ -458,35 +517,83 @@ def main():
     ax_temp.legend()
     st.pyplot(fig_temp)
 
+    st.subheader("Модель по %σ-фазы (JMAK)")
+    if sigma_model_basic is None and sigma_model_with_d is None:
+        st.info("Нет валидных строк с c_sigma_pct (0–100%) для построения модели %σ.")
+    else:
+        col_s1, col_s2 = st.columns(2)
+        with col_s1:
+            if sigma_model_basic is not None:
+                st.markdown("**Без диаметра**")
+                st.markdown(
+                    fr"Q ≈ {sigma_model_basic['Q_kJ_per_mol']:.1f} кДж/моль, RMSE T ≈ {sigma_model_basic['metrics']['rmse']:.2f} K"
+                )
+            else:
+                st.markdown("**Без диаметра**: данных недостаточно")
+        with col_s2:
+            if sigma_model_with_d is not None:
+                st.markdown("**С диаметром**")
+                st.markdown(
+                    fr"Q ≈ {sigma_model_with_d['Q_kJ_per_mol']:.1f} кДж/моль, RMSE T ≈ {sigma_model_with_d['metrics']['rmse']:.2f} K"
+                )
+            else:
+                st.markdown("**С диаметром**: данных недостаточно")
+
     st.subheader("Новая точка — оценка температуры")
     with st.form("new_point"):
-        col_a, col_b, col_c = st.columns(3)
+        col_a, col_b, col_c, col_d = st.columns(4)
         with col_a:
             G_input = st.number_input("G (номер зерна)", min_value=1.0, value=8.0, format="%.1f")
         with col_b:
             tau_input = st.number_input("τ, часы", min_value=1.0, value=4000.0, format="%.1f")
         with col_c:
             d_input = st.number_input("D, мкм", min_value=0.1, value=1.8, format="%.3f")
+        with col_d:
+            c_sigma_input = st.number_input("σ-фаза, %", min_value=0.1, value=5.0, format="%.2f")
         submitted = st.form_submit_button("Оценить температуру")
+
     if submitted:
         T_growth = estimate_temperature_growth(growth_model, d_input, tau_input, G_input, selected_m)
         T_kG = estimate_temperature_kG(kG_model, d_input, tau_input, G_input)
+        T_sigma_basic = estimate_temperature_sigma(
+            sigma_model_basic,
+            c_sigma_input / 100.0,
+            tau_input,
+            G_input,
+            None,
+        )
+        T_sigma_with_d = estimate_temperature_sigma(
+            sigma_model_with_d,
+            c_sigma_input / 100.0,
+            tau_input,
+            G_input,
+            d_input,
+        )
+
         st.markdown("---")
         T560 = SIGMA_TEMP_MIN + 273.15
         required_d = compute_predicted_diameter(T560, tau_input, G_input, {"k0": growth_model["k0"], "beta_G": growth_model["beta_G"], "Q_J": growth_model["Q_J"]}, selected_m)
         st.write(f"Оценка модели при {SIGMA_TEMP_MIN}°C: $D_{{560}} = {required_d:.3f}\,\mu m$ для заданных G и τ.")
+
         if T_growth is not None:
             st.write(f"Ростовая модель: $T = {T_growth:.1f}\,K$ ({T_growth - 273.15:.1f} °C)")
         else:
-            st.write(
-                "Ростовая модель не дала решения → фактический диаметр меньше расчетного при 560°C, значит сигма-фаза ещё не выросла до указанного размера."
-            )
+            st.write("Ростовая модель не дала решения → фактический диаметр меньше расчетного при 560°C, значит сигма-фаза ещё не выросла до указанного размера.")
+
         if T_kG is not None:
             st.write(f"Модель с $k_G$: $T = {T_kG:.1f}\,K$ ({T_kG - 273.15:.1f} °C)")
         else:
-            st.write(
-                "k_G-модель не дала решения → для этой точки σ-фаза оценивается ниже 560°C на основе текущей формулы."
-            )
+            st.write("k_G-модель не дала решения → для этой точки σ-фаза оценивается ниже 560°C на основе текущей формулы.")
+
+        if T_sigma_basic is not None:
+            st.write(f"JMAK (без D): $T = {T_sigma_basic:.1f}\,K$ ({T_sigma_basic - 273.15:.1f} °C)")
+        else:
+            st.write("JMAK (без D): нет решения или нет данных.")
+
+        if T_sigma_with_d is not None:
+            st.write(f"JMAK (с D): $T = {T_sigma_with_d:.1f}\,K$ ({T_sigma_with_d - 273.15:.1f} °C)")
+        else:
+            st.write("JMAK (с D): нет решения или нет данных.")
 
     st.subheader("Данные и предсказания")
     display_df = df[["G", "T_C", "tau_h", "d_equiv_um", "c_sigma_pct", "T_K"]].copy()
@@ -508,7 +615,6 @@ def main():
 
     display_df["pct_dev_growth"] = percent_error(display_df["d_equiv_um"], display_df["D_pred_growth"])
     display_df["pct_dev_kG"] = percent_error(display_df["d_equiv_um"], display_df["D_pred_kG"])
-
     percent_cols = ["pct_dev_growth", "pct_dev_kG"]
 
     def highlight_large(val):
@@ -526,11 +632,12 @@ def main():
             "T_pred_boosted_C": "{:.1f}",
         }
     ).applymap(highlight_large, subset=percent_cols)
-
     st.dataframe(styled)
+
     csv = display_df.to_csv(index=False).encode("utf-8")
     st.download_button("Скачать таблицу с предсказаниями", csv, "predictions.csv", "text/csv")
-    st.markdown("В таблице указаны температуры в °C, средний размер зерна (ум) и процентные отклонения. Красным выделены отклонения > 10%." )
+
+    st.markdown("В таблице указаны температуры в °C, средний размер зерна (ум) и процентные отклонения. Красным выделены отклонения > 10%.")
 
     df_analysis = display_df.copy()
     df_analysis["error_growth"] = df_analysis["d_equiv_um"] - df_analysis["D_pred_growth"]
@@ -548,7 +655,12 @@ def main():
         .sort_values("mean_abs_pct")
     )
 
-    df_analysis["temp_bin"] = pd.cut(df_analysis["T_C"], bins=[-1, 600, 650, 700, 750, 1000], labels=["≤600", "600-650", "650-700", "700-750", ">750"])
+    df_analysis["temp_bin"] = pd.cut(
+        df_analysis["T_C"],
+        bins=[-1, 600, 650, 700, 750, 1000],
+        labels=["≤600", "600-650", "650-700", "700-750", ">750"],
+    )
+
     summary_by_temp = (
         df_analysis.groupby("temp_bin")
         .agg(
@@ -566,31 +678,38 @@ def main():
     st.subheader("Анализ точности модели")
     fig_bins, ax_bins = plt.subplots(figsize=(6, 4))
     summary_by_temp_plot = summary_by_temp.reset_index()
-    ax_bins.bar(summary_by_temp_plot['temp_bin'].astype(str), summary_by_temp_plot['mean_abs_pct'], color='tab:blue', alpha=0.7)
+    ax_bins.bar(summary_by_temp_plot["temp_bin"].astype(str), summary_by_temp_plot["mean_abs_pct"], color="tab:blue", alpha=0.7)
     ax_bins.set_xlabel("Температурный диапазон, °C")
     ax_bins.set_ylabel("Среднее % отклонение")
     ax_bins.set_title("Точность по температурным диапазонам")
-    ax_bins.grid(axis='y', linestyle='--', alpha=0.5)
+    ax_bins.grid(axis="y", linestyle="--", alpha=0.5)
 
-    df_analysis['tau_bin'] = pd.cut(df_analysis['tau_h'], bins=[0, 2000, 5000, 10000, 20000], labels=["≤2000", "2000-5000", "5000-10000", ">10000"])
+    df_analysis["tau_bin"] = pd.cut(
+        df_analysis["tau_h"],
+        bins=[0, 2000, 5000, 10000, 20000],
+        labels=["≤2000", "2000-5000", "5000-10000", ">10000"],
+    )
+
     summary_by_tau = (
-        df_analysis.groupby('tau_bin')
-        .agg(count=('d_equiv_um', 'count'), mean_abs_pct=('abs_pct_growth', 'mean'))
+        df_analysis.groupby("tau_bin")
+        .agg(count=("d_equiv_um", "count"), mean_abs_pct=("abs_pct_growth", "mean"))
         .sort_index()
     )
+
     fig_tau, ax_tau = plt.subplots(figsize=(6, 4))
     summary_by_tau_plot = summary_by_tau.reset_index()
-    ax_tau.plot(summary_by_tau_plot['tau_bin'].astype(str), summary_by_tau_plot['mean_abs_pct'], marker='o', color='tab:green')
+    ax_tau.plot(summary_by_tau_plot["tau_bin"].astype(str), summary_by_tau_plot["mean_abs_pct"], marker="o", color="tab:green")
     ax_tau.set_xlabel("Наработка, ч")
     ax_tau.set_ylabel("Среднее % отклонение")
     ax_tau.set_title("Точность по наработке")
-    ax_tau.grid(True, linestyle='--', alpha=0.5)
+    ax_tau.grid(True, linestyle="--", alpha=0.5)
 
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("### По номеру зерна")
         st.write("Чем меньше среднее абсолютное отклонение, тем стабильнее модель описывает зерно.")
         st.dataframe(summary_by_G.style.format({"mean_abs_pct": "{:.1f}%", "error_mean": "{:.3f}", "error_std": "{:.3f}"}))
+
     with col2:
         st.markdown("### По температурным диапазонам")
         st.write("Наилучшая точность заметна в диапазоне 600-650°C, экстремальные значения дают больше разброса.")
@@ -603,10 +722,9 @@ def main():
 
     st.markdown("### Топ-5 точек с наибольшим отклонением")
     st.dataframe(top_outliers.style.format({"abs_pct_growth": "{:.1f}%"}))
-
     st.markdown("---")
     st.info(
-        "– `m` лучше выбирать по графику RMSE (в боковой панели).\n"
+        "– `m` лучше выбирать по графику RMSE (в боковой панели). "
         "– Загружай новые точки через uploader — приложение всегда работает с тем файлом, который ты сейчас проверяешь."
     )
 
