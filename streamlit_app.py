@@ -462,10 +462,26 @@ def main():
     if temp_growth.get("D_pred") is not None:
         df_edit["ΔD, μm"] = (df_edit["d_equiv_um"].values - temp_growth["D_pred"]).round(3)
         df_edit["|ΔD|, μm"] = np.abs(df_edit["ΔD, μm"]).round(3)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            df_edit["|ΔD|, %"] = (
+                np.abs(df_edit["ΔD, μm"].values) / df_edit["d_equiv_um"].values * 100
+            )
+            df_edit["|ΔD|, %"] = df_edit["|ΔD|, %"].replace([np.inf, -np.inf], np.nan)
 
     st.subheader("Фильтр данных (исключение точек)")
+    styled_edit = df_edit.style
+    if "|ΔD|, %" in df_edit.columns:
+        def color_dev(v):
+            if pd.isna(v):
+                return ""
+            if v <= 15:
+                return "background-color: #dff5e1"
+            if v <= 25:
+                return "background-color: #fff3cd"
+            return "background-color: #f8d7da"
+        styled_edit = styled_edit.applymap(color_dev, subset=["|ΔD|, %"])
     edited = st.data_editor(
-        df_edit,
+        styled_edit,
         use_container_width=True,
         num_rows="fixed",
         hide_index=True,
