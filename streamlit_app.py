@@ -311,6 +311,18 @@ def fit_boosted_temp_model(df):
     }
 
 
+def predict_sigma_fraction(model, tau, G, T_K, D=None):
+    y_pred = (
+        model["intercept"]
+        + model["beta_tau"] * np.log(tau)
+        + model["beta_G"] * G
+        + (model["beta_d"] * np.log(D) if D is not None else 0.0)
+        + model["beta_T"] * (1.0 / T_K)
+    )
+    f_pred = 1.0 - np.exp(-np.exp(y_pred))
+    return f_pred
+
+
 def fit_sigma_fraction_model(df, include_d=False):
     df = df.copy()
     df = df[df["c_sigma_pct"].notna()].copy()
@@ -348,8 +360,20 @@ def fit_sigma_fraction_model(df, include_d=False):
         T_est = estimate_temperature_sigma(model, f_val, tau_val, G_val, d_val if include_d else None)
         T_pred.append(np.nan if T_est is None else T_est)
     T_pred = np.array(T_pred, dtype=float)
+
+    # предсказание f на обучающей выборке
+    if include_d:
+        f_pred = predict_sigma_fraction(model, df["tau_h"].values, df["G"].values, df["T_K"].values, df["d_equiv_um"].values)
+    else:
+        f_pred = predict_sigma_fraction(model, df["tau_h"].values, df["G"].values, df["T_K"].values, None)
+
+    rmse_f = math.sqrt(mean_squared_error(f, f_pred))
+    rmse_f_pct = rmse_f * 100.0
     model["T_pred_K"] = T_pred
+    model["f_pred"] = f_pred
+    model["f_true"] = f
     model["metrics"] = compute_temp_metrics(df["T_K"].values, T_pred)
+    model["metrics_f"] = {"rmse_frac": rmse_f, "rmse_pct": rmse_f_pct}
     return model
 
 
@@ -521,12 +545,14 @@ def main():
     if sigma_model_basic is None and sigma_model_with_d is None:
         st.info("Нет валидных строк с c_sigma_pct (0–100%) для построения модели %σ.")
     else:
+        st.latex(r"f_{\sigma} = 1 - \exp[-k(T)\,\tau^{n}]\quad,\quad k(T)=k_0\exp(-Q/RT)")
+        st.latex(r"\ln[-\ln(1-f_{\sigma})] = a + b\ln\tau + cG + d\ln D + \beta_T/T")
         col_s1, col_s2 = st.columns(2)
         with col_s1:
             if sigma_model_basic is not None:
                 st.markdown("**Без диаметра**")
                 st.markdown(
-                    fr"Q ≈ {sigma_model_basic['Q_kJ_per_mol']:.1f} кДж/моль, RMSE T ≈ {sigma_model_basic['metrics']['rmse']:.2f} K"
+                    fr"Q ≈ {sigma_model_basic['Q_kJ_per_mol']:.1f} кДж/моль, RMSE T ≈ {sigma_model_basic['metrics']['rmse']:.2f} K, RMSE f ≈ {sigma_model_basic['metrics_f']['rmse_pct']:.2f}%"
                 )
             else:
                 st.markdown("**Без диаметра**: данных недостаточно")
@@ -534,10 +560,44 @@ def main():
             if sigma_model_with_d is not None:
                 st.markdown("**С диаметром**")
                 st.markdown(
-                    fr"Q ≈ {sigma_model_with_d['Q_kJ_per_mol']:.1f} кДж/моль, RMSE T ≈ {sigma_model_with_d['metrics']['rmse']:.2f} K"
+                    fr"Q ≈ {sigma_model_with_d['Q_kJ_per_mol']:.1f} кДж/моль, RMSE T ≈ {sigma_model_with_d['metrics']['rmse']:.2f} K, RMSE f ≈ {sigma_model_with_d['metrics_f']['rmse_pct']:.2f}%"
                 )
             else:
                 st.markdown("**С диаметром**: данных недостаточно")
+
+        # Графики и выбросы
+        fig_sig, ax_sig = plt.subplots(1, 2, figsize=(10, 4))
+        if sigma_model_basic is not None:
+            ax_sig[0].scatter(sigma_model_basic["f_true"] * 100, sigma_model_basic["f_pred"] * 100, color="tab:blue", alpha=0.7)
+            ax_sig[0].plot([0, 100], [0, 100], linestyle="--", color="gray")
+            ax_sig[0].set_title("%σ: факт vs прогноз (без D)")
+            ax_sig[0].set_xlabel("Факт, %")
+            ax_sig[0].set_ylabel("Прогноз, %")
+        if sigma_model_with_d is not None:
+            ax_sig[1].scatter(sigma_model_with_d["f_true"] * 100, sigma_model_with_d["f_pred"] * 100, color="tab:orange", alpha=0.7)
+            ax_sig[1].plot([0, 100], [0, 100], linestyle="--", color="gray")
+            ax_sig[1].set_title("%σ: факт vs прогноз (с D)")
+            ax_sig[1].set_xlabel("Факт, %")
+            ax_sig[1].set_ylabel("Прогноз, %")
+        st.pyplot(fig_sig)
+
+        # Наиболее выпадающие точки
+        def top_outliers_sigma(model, label):
+            if model is None:
+                return None
+            err_pct = np.abs(model["f_true"] - model["f_pred"]) * 100
+            idx = np.argsort(err_pct)[::-1][:5]
+            out_df = df.iloc[idx][["G", "T_C", "tau_h", "d_equiv_um", "c_sigma_pct"]].copy()
+            out_df["err_%"] = err_pct[idx]
+            out_df["model"] = label
+            return out_df
+
+        out_basic = top_outliers_sigma(sigma_model_basic, "JMAK без D")
+        out_with_d = top_outliers_sigma(sigma_model_with_d, "JMAK с D")
+        out_frames = [x for x in [out_basic, out_with_d] if x is not None]
+        if out_frames:
+            st.markdown("**Наиболее выпадающие точки (%σ):**")
+            st.dataframe(pd.concat(out_frames, ignore_index=True).sort_values("err_%", ascending=False))
 
     st.subheader("Новая точка — оценка температуры")
     with st.form("new_point"):
