@@ -360,6 +360,13 @@ def estimate_temperature_sigma(model, f_sigma, tau, G, D=None):
         return "below" if flags[0] < 0 else "above"
     return float(T_arr[0])
 def render_analysis(df, selected_m):
+    growth_model = fit_growth_model(df, selected_m, include_predictions=True)
+    kG_model = fit_kG_model(df, include_predictions=True)
+    inverse_model = fit_inverse_temp_model(df)
+    boosted_model = fit_boosted_temp_model(df)
+    sigma_model_basic = fit_sigma_fraction_model(df, include_d=False)
+    sigma_model_with_d = fit_sigma_fraction_model(df, include_d=True)
+
     st.subheader("Параметры моделей")
     col1, col2 = st.columns(2)
     with col1:
