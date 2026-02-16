@@ -563,31 +563,31 @@ def main():
     T_true_K = df["T_K"].values
     T_true_C = df["T_C"].values
     tau = df["tau_h"].values
-    focus_mask = (
-        (T_true_C >= 580) & (T_true_C <= 650) & (tau >= 100000) & (tau <= 300000)
-    )
+    focus_mask_temp = (T_true_C >= 580) & (T_true_C <= 650)
 
     models = [
-        ("Ростовая", growth_model["T_pred_K"]),
-        ("k_G", kG_model["T_pred_K"]),
-        ("1/T-регрессия", inverse_model["T_pred_K"]),
-        ("Boosted", boosted_model["T_pred_K"]),
+        ("Ростовая D^m", growth_model["T_pred_K"]),
+        ("Рост k_G (зерно)", kG_model["T_pred_K"]),
+        ("Регрессия 1/T", inverse_model["T_pred_K"]),
+        ("Градиентный бустинг", boosted_model["T_pred_K"]),
     ]
 
     rows = []
     for name, preds in models:
         base = subset_metrics(T_true_K, preds, np.isfinite(preds))
-        focus = subset_metrics(T_true_K, preds, np.isfinite(preds) & focus_mask)
+        focus_mask = np.isfinite(preds) & focus_mask_temp
+        n_focus = int(focus_mask.sum())
+        focus = subset_metrics(T_true_K, preds, focus_mask) if n_focus >= 2 else {"rmse": float("nan"), "r2": float("nan"), "mae": float("nan")}
         rows.append(
             {
                 "Модель": name,
                 "R² (вся выборка)": base["r2"],
                 "RMSE, K (вся выборка)": base["rmse"],
                 "MAE, K (вся выборка)": base["mae"],
-                "R² (580–650°C, 100–300 тыс. ч)": focus["r2"],
-                "RMSE, K (фокус)": focus["rmse"],
-                "MAE, K (фокус)": focus["mae"],
-                "N (фокус)": int((np.isfinite(preds) & focus_mask).sum()),
+                "R² (580–650°C)": focus["r2"],
+                "RMSE, K (580–650°C)": focus["rmse"],
+                "MAE, K (580–650°C)": focus["mae"],
+                "N (580–650°C)": n_focus,
             }
         )
 
@@ -598,9 +598,9 @@ def main():
                 "R² (вся выборка)": "{:.3f}",
                 "RMSE, K (вся выборка)": "{:.1f}",
                 "MAE, K (вся выборка)": "{:.1f}",
-                "R² (580–650°C, 100–300 тыс. ч)": "{:.3f}",
-                "RMSE, K (фокус)": "{:.1f}",
-                "MAE, K (фокус)": "{:.1f}",
+                "R² (580–650°C)": "{:.3f}",
+                "RMSE, K (580–650°C)": "{:.1f}",
+                "MAE, K (580–650°C)": "{:.1f}",
             }
         )
     )
@@ -608,7 +608,8 @@ def main():
     st.caption(
         "R² — коэффициент достоверности аппроксимации (ближе к 1 — лучше). "
         "RMSE — среднеквадратичное отклонение в К; MAE — средняя абсолютная ошибка. "
-        "Фокус‑метрики рассчитаны для диапазона 580–650°C и наработки 100–300 тыс. ч."
+        "Диапазон 580–650°C считается отдельно. Если точек меньше 2, метрики не считаются (NaN). "
+        "N — число точек в этом диапазоне."
     )
 
     st.subheader("Модель по %σ-фазы (JMAK)")
