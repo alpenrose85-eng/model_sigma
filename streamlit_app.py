@@ -462,16 +462,16 @@ def main():
     df_edit["row_id"] = df_edit.index.astype(int)
 
     if temp_growth.get("D_pred") is not None:
-        df_edit["ΔD (Рост), μm"] = (df_edit["d_equiv_um"].values - temp_growth["D_pred"]).round(3)
+        df_edit["ΔD (Рост), μm"] = (df_edit["d_equiv_um"].values - temp_growth["D_pred"]).round(2)
         df_edit["|ΔD| Рост, %"] = (
             np.abs(df_edit["ΔD (Рост), μm"].values) / df_edit["d_equiv_um"].values * 100
-        )
+        ).round(0)
 
     if temp_kG.get("D_pred") is not None:
-        df_edit["ΔD (k_G), μm"] = (df_edit["d_equiv_um"].values - temp_kG["D_pred"]).round(3)
+        df_edit["ΔD (k_G), μm"] = (df_edit["d_equiv_um"].values - temp_kG["D_pred"]).round(2)
         df_edit["|ΔD| k_G, %"] = (
             np.abs(df_edit["ΔD (k_G), μm"].values) / df_edit["d_equiv_um"].values * 100
-        )
+        ).round(0)
 
     for col in ["|ΔD| Рост, %", "|ΔD| k_G, %"]:
         if col in df_edit.columns:
