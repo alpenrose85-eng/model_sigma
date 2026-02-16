@@ -480,13 +480,13 @@ def main():
 
     if temp_sigma_basic is not None:
         df_edit["|Δσ| JMAK, %"] = (
-            np.abs((df_edit["c_sigma_pct"].values / 100.0) - temp_sigma_basic["f_pred"]) * 100
-        ).round(0)
+            np.abs(df_edit["c_sigma_pct"].values - (temp_sigma_basic["f_pred"] * 100))
+        ).round(2)
 
     if temp_sigma_with_d is not None:
         df_edit["|Δσ| JMAK+D, %"] = (
-            np.abs((df_edit["c_sigma_pct"].values / 100.0) - temp_sigma_with_d["f_pred"]) * 100
-        ).round(0)
+            np.abs(df_edit["c_sigma_pct"].values - (temp_sigma_with_d["f_pred"] * 100))
+        ).round(2)
 
     for col in ["|ΔD| Рост, %", "|ΔD| k_G, %", "|Δσ| JMAK, %", "|Δσ| JMAK+D, %"]:
         if col in df_edit.columns:
