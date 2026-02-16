@@ -457,6 +457,9 @@ def main():
     # Быстрое исключение точек (с подсказкой отклонений по ростовой модели)
     temp_growth = fit_growth_model(df, selected_m, include_predictions=True)
     temp_kG = fit_kG_model(df, include_predictions=True)
+    temp_sigma_basic = fit_sigma_fraction_model(df, include_d=False)
+    temp_sigma_with_d = fit_sigma_fraction_model(df, include_d=True)
+
     df_edit = df[["G", "T_C", "tau_h", "d_equiv_um", "c_sigma_pct"]].copy()
     df_edit["d_equiv_um"] = df_edit["d_equiv_um"].round(3)
     df_edit["c_sigma_pct"] = df_edit["c_sigma_pct"].round(2)
@@ -475,7 +478,17 @@ def main():
             np.abs(df_edit["ΔD (k_G), μm"].values) / df_edit["d_equiv_um"].values * 100
         ).round(0)
 
-    for col in ["|ΔD| Рост, %", "|ΔD| k_G, %"]:
+    if temp_sigma_basic is not None:
+        df_edit["|Δσ| JMAK, %"] = (
+            np.abs((df_edit["c_sigma_pct"].values / 100.0) - temp_sigma_basic["f_pred"]) * 100
+        ).round(0)
+
+    if temp_sigma_with_d is not None:
+        df_edit["|Δσ| JMAK+D, %"] = (
+            np.abs((df_edit["c_sigma_pct"].values / 100.0) - temp_sigma_with_d["f_pred"]) * 100
+        ).round(0)
+
+    for col in ["|ΔD| Рост, %", "|ΔD| k_G, %", "|Δσ| JMAK, %", "|Δσ| JMAK+D, %"]:
         if col in df_edit.columns:
             df_edit[col] = df_edit[col].replace([np.inf, -np.inf], np.nan)
 
@@ -491,7 +504,7 @@ def main():
             return "background-color: #fff3cd"
         return "background-color: #f8d7da"
 
-    for col in ["|ΔD| Рост, %", "|ΔD| k_G, %"]:
+    for col in ["|ΔD| Рост, %", "|ΔD| k_G, %", "|Δσ| JMAK, %", "|Δσ| JMAK+D, %"]:
         if col in df_edit.columns:
             styled_edit = styled_edit.applymap(color_dev, subset=[col])
 
