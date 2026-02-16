@@ -442,6 +442,23 @@ def main():
         st.error("В загруженном файле нет точек внутри допустимого диапазона σ-фазы.")
         return
 
+    # Быстрое исключение точек
+    st.subheader("Фильтр данных (исключение точек)")
+    df_edit = df[["G", "T_C", "tau_h", "d_equiv_um", "c_sigma_pct"]].copy()
+    df_edit.insert(0, "exclude", False)
+    df_edit["row_id"] = df_edit.index.astype(int)
+    edited = st.data_editor(
+        df_edit,
+        use_container_width=True,
+        num_rows="fixed",
+        hide_index=True,
+        key="exclude_editor",
+    )
+    exclude_ids = edited.loc[edited["exclude"] == True, "row_id"].tolist()
+    if exclude_ids:
+        st.info(f"Исключено точек: {len(exclude_ids)}")
+    df = df.drop(index=exclude_ids)
+
     st.sidebar.subheader("Выбор роста")
     m_candidates = np.round(np.linspace(1.0, 3.0, 21), 2)
     rmse_by_m = []
@@ -465,7 +482,7 @@ def main():
     st.subheader("Параметры моделей")
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("### Ростовая модель")
+        st.markdown("### Рост Dэкв (Аррениус)")
         st.markdown(
             fr"""
             - $k_0 = e^{{{growth_model['intercept']:.2f}}} \approx {growth_model['k0']:.0f}$
@@ -479,6 +496,20 @@ def main():
             unsafe_allow_html=True,
         )
         st.latex(r"D^m = k_0 \cdot e^{-Q/(RT)} \cdot \tau \cdot e^{\beta_G G}")
+        st.markdown(
+            """
+**Обозначения:**
+- **D** — эквивалентный диаметр σ‑фазы, мкм
+- **m** — показатель степени роста (подбирается по данным)
+- **k₀** — коэффициент, определяемый экспериментально
+- **Q** — энергия активации роста, кДж/моль
+- **R** — универсальная газовая постоянная = 8.314 Дж/(моль·К)
+- **T** — температура, К
+- **τ** — наработка, ч
+- **G** — номер зерна
+- **β_G** — коэффициент влияния зерна
+            """
+        )
 
     with col2:
         st.markdown("### Модель с $k_G$(предсказанный размер зерна)")
@@ -551,42 +582,41 @@ def main():
     st.pyplot(fig_temp)
 
     # Сводная таблица по 4 моделям температуры
-    st.subheader("Сводная таблица качества (4 модели температуры)")
-    def subset_metrics(T_true_K, T_pred_K, mask):
+    st.subheader("Сводная таблица качества (по диаметру D)")
+    def subset_metrics_D(D_true, D_pred, mask):
         if not mask.any():
             return {"rmse": float("nan"), "r2": float("nan"), "mae": float("nan")}
-        rmse = math.sqrt(mean_squared_error(T_true_K[mask], T_pred_K[mask]))
-        r2 = r2_score(T_true_K[mask], T_pred_K[mask])
-        mae = np.mean(np.abs(T_true_K[mask] - T_pred_K[mask]))
+        rmse = math.sqrt(mean_squared_error(D_true[mask], D_pred[mask]))
+        r2 = r2_score(D_true[mask], D_pred[mask])
+        mae = np.mean(np.abs(D_true[mask] - D_pred[mask]))
         return {"rmse": rmse, "r2": r2, "mae": mae}
 
-    T_true_K = df["T_K"].values
     T_true_C = df["T_C"].values
-    tau = df["tau_h"].values
     focus_mask_temp = (T_true_C >= 580) & (T_true_C <= 650)
 
     models = [
-        ("Ростовая D^m", growth_model["T_pred_K"]),
-        ("Рост k_G (зерно)", kG_model["T_pred_K"]),
-        ("Регрессия 1/T", inverse_model["T_pred_K"]),
-        ("Градиентный бустинг", boosted_model["T_pred_K"]),
+        ("Рост Dэкв (Аррениус)", growth_model.get("D_pred")),
+        ("Рост k_G (зерно)", kG_model.get("D_pred")),
     ]
 
     rows = []
     for name, preds in models:
-        base = subset_metrics(T_true_K, preds, np.isfinite(preds))
+        if preds is None:
+            continue
+        preds = np.array(preds)
+        base = subset_metrics_D(df["d_equiv_um"].values, preds, np.isfinite(preds))
         focus_mask = np.isfinite(preds) & focus_mask_temp
         n_focus = int(focus_mask.sum())
-        focus = subset_metrics(T_true_K, preds, focus_mask) if n_focus >= 2 else {"rmse": float("nan"), "r2": float("nan"), "mae": float("nan")}
+        focus = subset_metrics_D(df["d_equiv_um"].values, preds, focus_mask) if n_focus >= 2 else {"rmse": float("nan"), "r2": float("nan"), "mae": float("nan")}
         rows.append(
             {
                 "Модель": name,
                 "R² (вся выборка)": base["r2"],
-                "RMSE, K (вся выборка)": base["rmse"],
-                "MAE, K (вся выборка)": base["mae"],
+                "RMSE, μm (вся выборка)": base["rmse"],
+                "MAE, μm (вся выборка)": base["mae"],
                 "R² (580–650°C)": focus["r2"],
-                "RMSE, K (580–650°C)": focus["rmse"],
-                "MAE, K (580–650°C)": focus["mae"],
+                "RMSE, μm (580–650°C)": focus["rmse"],
+                "MAE, μm (580–650°C)": focus["mae"],
                 "N (580–650°C)": n_focus,
             }
         )
@@ -596,18 +626,19 @@ def main():
         summary_df.style.format(
             {
                 "R² (вся выборка)": "{:.3f}",
-                "RMSE, K (вся выборка)": "{:.1f}",
-                "MAE, K (вся выборка)": "{:.1f}",
+                "RMSE, μm (вся выборка)": "{:.3f}",
+                "MAE, μm (вся выборка)": "{:.3f}",
                 "R² (580–650°C)": "{:.3f}",
-                "RMSE, K (580–650°C)": "{:.1f}",
-                "MAE, K (580–650°C)": "{:.1f}",
+                "RMSE, μm (580–650°C)": "{:.3f}",
+                "MAE, μm (580–650°C)": "{:.3f}",
             }
         )
     )
 
     st.caption(
+        "Таблица оценивает качество предсказания D (а не T). "
         "R² — коэффициент достоверности аппроксимации (ближе к 1 — лучше). "
-        "RMSE — среднеквадратичное отклонение в К; MAE — средняя абсолютная ошибка. "
+        "RMSE/MAE — ошибки по диаметру в μm. "
         "Диапазон 580–650°C считается отдельно. Если точек меньше 2, метрики не считаются (NaN). "
         "N — число точек в этом диапазоне."
     )
