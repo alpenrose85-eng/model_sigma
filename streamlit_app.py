@@ -354,6 +354,7 @@ def fit_sigma_fraction_model(df, include_d=False):
         "beta_d": beta_d,
         "beta_T": beta_T,
         "Q_kJ_per_mol": (-beta_T * R) / 1000.0,
+        "df_index": df.index.to_numpy(),
     }
 
     # предсказание температуры на обучающей выборке
@@ -479,13 +480,23 @@ def main():
         ).round(0)
 
     if temp_sigma_basic is not None:
+        map_basic = dict(zip(temp_sigma_basic["df_index"], temp_sigma_basic["f_pred"] * 100))
         df_edit["|Δσ| JMAK, %"] = (
-            np.abs(df_edit["c_sigma_pct"].values - (temp_sigma_basic["f_pred"] * 100))
+            df_edit.apply(
+                lambda r: np.nan if pd.isna(r["c_sigma_pct"]) or r["row_id"] not in map_basic
+                else abs(r["c_sigma_pct"] - map_basic[r["row_id"]]),
+                axis=1,
+            )
         ).round(2)
 
     if temp_sigma_with_d is not None:
+        map_with_d = dict(zip(temp_sigma_with_d["df_index"], temp_sigma_with_d["f_pred"] * 100))
         df_edit["|Δσ| JMAK+D, %"] = (
-            np.abs(df_edit["c_sigma_pct"].values - (temp_sigma_with_d["f_pred"] * 100))
+            df_edit.apply(
+                lambda r: np.nan if pd.isna(r["c_sigma_pct"]) or r["row_id"] not in map_with_d
+                else abs(r["c_sigma_pct"] - map_with_d[r["row_id"]]),
+                axis=1,
+            )
         ).round(2)
 
     for col in ["|ΔD| Рост, %", "|ΔD| k_G, %", "|Δσ| JMAK, %", "|Δσ| JMAK+D, %"]:
