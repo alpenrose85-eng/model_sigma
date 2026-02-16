@@ -458,6 +458,8 @@ def main():
     temp_growth = fit_growth_model(df, selected_m, include_predictions=True)
     temp_kG = fit_kG_model(df, include_predictions=True)
     df_edit = df[["G", "T_C", "tau_h", "d_equiv_um", "c_sigma_pct"]].copy()
+    df_edit["d_equiv_um"] = df_edit["d_equiv_um"].round(3)
+    df_edit["c_sigma_pct"] = df_edit["c_sigma_pct"].round(2)
     df_edit.insert(0, "exclude", False)
     df_edit["row_id"] = df_edit.index.astype(int)
 
