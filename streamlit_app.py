@@ -484,20 +484,22 @@ def main():
         df_edit["|Δσ| JMAK, %"] = (
             df_edit.apply(
                 lambda r: np.nan if pd.isna(r["c_sigma_pct"]) or r["row_id"] not in map_basic
-                else abs(r["c_sigma_pct"] - map_basic[r["row_id"]]),
+                else abs(r["c_sigma_pct"] - map_basic[r["row_id"]]) / map_basic[r["row_id"]] * 100
+                if map_basic[r["row_id"]] != 0 else np.nan,
                 axis=1,
             )
-        ).round(2)
+        ).round(0)
 
     if temp_sigma_with_d is not None:
         map_with_d = dict(zip(temp_sigma_with_d["df_index"], temp_sigma_with_d["f_pred"] * 100))
         df_edit["|Δσ| JMAK+D, %"] = (
             df_edit.apply(
                 lambda r: np.nan if pd.isna(r["c_sigma_pct"]) or r["row_id"] not in map_with_d
-                else abs(r["c_sigma_pct"] - map_with_d[r["row_id"]]),
+                else abs(r["c_sigma_pct"] - map_with_d[r["row_id"]]) / map_with_d[r["row_id"]] * 100
+                if map_with_d[r["row_id"]] != 0 else np.nan,
                 axis=1,
             )
-        ).round(2)
+        ).round(0)
 
     for col in ["|ΔD| Рост, %", "|ΔD| k_G, %", "|Δσ| JMAK, %", "|Δσ| JMAK+D, %"]:
         if col in df_edit.columns:
