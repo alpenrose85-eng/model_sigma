@@ -442,23 +442,6 @@ def main():
         st.error("В загруженном файле нет точек внутри допустимого диапазона σ-фазы.")
         return
 
-    # Быстрое исключение точек
-    st.subheader("Фильтр данных (исключение точек)")
-    df_edit = df[["G", "T_C", "tau_h", "d_equiv_um", "c_sigma_pct"]].copy()
-    df_edit.insert(0, "exclude", False)
-    df_edit["row_id"] = df_edit.index.astype(int)
-    edited = st.data_editor(
-        df_edit,
-        use_container_width=True,
-        num_rows="fixed",
-        hide_index=True,
-        key="exclude_editor",
-    )
-    exclude_ids = edited.loc[edited["exclude"] == True, "row_id"].tolist()
-    if exclude_ids:
-        st.info(f"Исключено точек: {len(exclude_ids)}")
-    df = df.drop(index=exclude_ids)
-
     st.sidebar.subheader("Выбор роста")
     m_candidates = np.round(np.linspace(1.0, 3.0, 21), 2)
     rmse_by_m = []
@@ -470,6 +453,28 @@ def main():
     selected_m = st.sidebar.slider("Экспонента роста m", 1.0, 3.0, best_m, step=0.1)
     st.sidebar.markdown("---")
     st.sidebar.caption("Чтобы подставить исторические точки, обнови файл и перезапусти приложение.")
+
+    # Быстрое исключение точек (с подсказкой отклонений по ростовой модели)
+    temp_growth = fit_growth_model(df, selected_m, include_predictions=True)
+    df_edit = df[["G", "T_C", "tau_h", "d_equiv_um", "c_sigma_pct"]].copy()
+    df_edit.insert(0, "exclude", False)
+    df_edit["row_id"] = df_edit.index.astype(int)
+    if temp_growth.get("D_pred") is not None:
+        df_edit["ΔD, μm"] = (df_edit["d_equiv_um"].values - temp_growth["D_pred"]).round(3)
+        df_edit["|ΔD|, μm"] = np.abs(df_edit["ΔD, μm"]).round(3)
+
+    st.subheader("Фильтр данных (исключение точек)")
+    edited = st.data_editor(
+        df_edit,
+        use_container_width=True,
+        num_rows="fixed",
+        hide_index=True,
+        key="exclude_editor",
+    )
+    exclude_ids = edited.loc[edited["exclude"] == True, "row_id"].tolist()
+    if exclude_ids:
+        st.info(f"Исключено точек: {len(exclude_ids)}")
+    df = df.drop(index=exclude_ids)
 
     growth_model = fit_growth_model(df, selected_m, include_predictions=True)
     kG_model = fit_kG_model(df, include_predictions=True)
