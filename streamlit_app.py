@@ -449,7 +449,13 @@ def filter_table(df, dev_col, dev_values, key_prefix):
     df_edit[dev_col] = dev_values
     df_edit[dev_col] = df_edit[dev_col].replace([np.inf, -np.inf], np.nan).round(0)
 
-    styled = df_edit.style.applymap(deviation_color, subset=[dev_col])
+    styled = df_edit.style.applymap(deviation_color, subset=[dev_col]).format(
+        {
+            "d_equiv_um": "{:.3f}",
+            "c_sigma_pct": "{:.2f}",
+            dev_col: "{:.0f}",
+        }
+    )
     st.markdown("**Цветная оценка отклонений (|Δ|, %):**")
     st.dataframe(styled, use_container_width=True, hide_index=True)
     st.markdown("**Таблица выбора точек для исключения:**")
