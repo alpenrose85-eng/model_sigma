@@ -499,7 +499,7 @@ def render_growth_tab(df, selected_m, key_prefix="growth"):
 - $\mathrm{{RMSE}}(D) = {model['metric']['rmse']:.3f}\,\mu\mathrm{{m}}$
 - $\mathrm{{RMSE}}(\ln D) = {model['metric']['rmse_log']:.3f}$
 - $R^2 = {model['metric']['r2']:.3f}$
-- $\mathrm{{RMSE}}(T) = {model['temp_rmse_K']:.1f}\,\mathrm{{K}}$
+- $\mathrm{{RMSE}}(T) = {model['temp_rmse_K']:.1f}\,\mathrm{{°C}}$
 """,
         unsafe_allow_html=True,
     )
@@ -537,13 +537,13 @@ def render_growth_tab(df, selected_m, key_prefix="growth"):
 
     st.subheader("Температура: прогноз vs факт")
     fig_temp, ax_temp = plt.subplots(figsize=(6, 5))
-    true_T = df_f["T_K"]
-    preds = model["T_pred_K"]
+    true_T = df_f["T_C"]
+    preds = model["T_pred_K"] - 273.15
     mask = np.isfinite(preds)
     ax_temp.scatter(true_T[mask], preds[mask], color="tab:blue", alpha=0.7)
     ax_temp.plot(true_T, true_T, linestyle="--", color="gray")
-    ax_temp.set_xlabel("Наблюдаемая T, K")
-    ax_temp.set_ylabel("Предсказанная T, K")
+    ax_temp.set_xlabel("Наблюдаемая T, °C")
+    ax_temp.set_ylabel("Предсказанная T, °C")
     ax_temp.set_title("Ростовая модель")
     st.pyplot(fig_temp)
 
@@ -551,7 +551,7 @@ def render_growth_tab(df, selected_m, key_prefix="growth"):
     quality = {
         "RMSE D, μm": model["metric"]["rmse"],
         "R² D": model["metric"]["r2"],
-        "RMSE T, K": model["temp_rmse_K"],
+        "RMSE T, °C": model["temp_rmse_K"],
     }
     st.dataframe(pd.DataFrame([quality]))
 
@@ -584,7 +584,7 @@ def render_kG_tab(df, key_prefix="kG"):
 - $\mathrm{{RMSE}}(D) = {model['metric']['rmse']:.3f}\,\mu\mathrm{{m}}$
 - $\mathrm{{RMSE}}(\ln D) = {model['metric']['rmse_log']:.3f}$
 - $R^2 = {model['metric']['r2']:.3f}$
-- $\mathrm{{RMSE}}(T) = {model['temp_rmse_K']:.1f}\,\mathrm{{K}}$
+- $\mathrm{{RMSE}}(T) = {model['temp_rmse_K']:.1f}\,\mathrm{{°C}}$
 """,
         unsafe_allow_html=True,
     )
@@ -603,13 +603,13 @@ def render_kG_tab(df, key_prefix="kG"):
 
     st.subheader("Температура: прогноз vs факт")
     fig_temp, ax_temp = plt.subplots(figsize=(6, 5))
-    true_T = df_f["T_K"]
-    preds = model["T_pred_K"]
+    true_T = df_f["T_C"]
+    preds = model["T_pred_K"] - 273.15
     mask = np.isfinite(preds)
     ax_temp.scatter(true_T[mask], preds[mask], color="tab:orange", alpha=0.7)
     ax_temp.plot(true_T, true_T, linestyle="--", color="gray")
-    ax_temp.set_xlabel("Наблюдаемая T, K")
-    ax_temp.set_ylabel("Предсказанная T, K")
+    ax_temp.set_xlabel("Наблюдаемая T, °C")
+    ax_temp.set_ylabel("Предсказанная T, °C")
     ax_temp.set_title("k_G модель")
     st.pyplot(fig_temp)
 
@@ -617,7 +617,7 @@ def render_kG_tab(df, key_prefix="kG"):
     quality = {
         "RMSE D, μm": model["metric"]["rmse"],
         "R² D": model["metric"]["r2"],
-        "RMSE T, K": model["temp_rmse_K"],
+        "RMSE T, °C": model["temp_rmse_K"],
     }
     st.dataframe(pd.DataFrame([quality]))
 
@@ -629,25 +629,26 @@ def render_inverse_tab(df, key_prefix="inverse"):
 
     include_G = df["G"].nunique() > 1
     initial = fit_inverse_temp_model(df, include_G=include_G)
-    T_true = df["T_K"].values
-    dev = np.abs(T_true - initial["T_pred_K"]) / T_true * 100
+    T_true = df["T_C"].values
+    preds_init = initial["T_pred_K"] - 273.15
+    dev = np.abs(T_true - preds_init) / T_true * 100
     df_f = filter_table(df, "|ΔT|, %", dev, key_prefix)
     include_G = df_f["G"].nunique() > 1
     model = fit_inverse_temp_model(df_f, include_G=include_G)
 
-    st.markdown(f"RMSE T: {model['metrics']['rmse']:.2f} K, R²: {model['metrics']['r2']:.3f}")
+    st.markdown(f"RMSE T: {model['metrics']['rmse']:.2f} °C, R²: {model['metrics']['r2']:.3f}")
 
     st.subheader("Графики качества")
     fig, axs = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
-    preds = model["T_pred_K"]
+    preds = model["T_pred_K"] - 273.15
     mask = np.isfinite(preds)
-    axs[0].scatter(df_f["T_K"][mask], preds[mask], color="tab:green", alpha=0.7)
-    axs[0].plot(df_f["T_K"], df_f["T_K"], linestyle="--", color="gray")
-    axs[0].set_xlabel("Наблюдаемая T, K")
-    axs[0].set_ylabel("Предсказанная T, K")
+    axs[0].scatter(df_f["T_C"][mask], preds[mask], color="tab:green", alpha=0.7)
+    axs[0].plot(df_f["T_C"], df_f["T_C"], linestyle="--", color="gray")
+    axs[0].set_xlabel("Наблюдаемая T, °C")
+    axs[0].set_ylabel("Предсказанная T, °C")
     axs[0].set_title("Факт vs прогноз")
-    axs[1].hist(df_f["T_K"][mask] - preds[mask], bins=15, color="tab:green")
-    axs[1].set_xlabel("ΔT, K")
+    axs[1].hist(df_f["T_C"][mask] - preds[mask], bins=15, color="tab:green")
+    axs[1].set_xlabel("ΔT, °C")
     axs[1].set_title("Остатки")
     st.pyplot(fig)
 
@@ -663,13 +664,14 @@ def render_boosted_tab(df, key_prefix="boost"):
 
     include_G = df["G"].nunique() > 1
     initial = fit_boosted_temp_model(df, include_G=include_G)
-    T_true = df["T_K"].values
-    dev = np.abs(T_true - initial["T_pred_K"]) / T_true * 100
+    T_true = df["T_C"].values
+    preds_init = initial["T_pred_K"] - 273.15
+    dev = np.abs(T_true - preds_init) / T_true * 100
     df_f = filter_table(df, "|ΔT|, %", dev, key_prefix)
     include_G = df_f["G"].nunique() > 1
     model = fit_boosted_temp_model(df_f, include_G=include_G)
 
-    st.markdown(f"RMSE T: {model['metrics']['rmse']:.2f} K, R²: {model['metrics']['r2']:.3f}")
+    st.markdown(f"RMSE T: {model['metrics']['rmse']:.2f} °C, R²: {model['metrics']['r2']:.3f}")
 
     try:
         importances = model["model"].feature_importances_
@@ -683,15 +685,15 @@ def render_boosted_tab(df, key_prefix="boost"):
 
     st.subheader("Графики качества")
     fig, axs = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
-    preds = model["T_pred_K"]
+    preds = model["T_pred_K"] - 273.15
     mask = np.isfinite(preds)
-    axs[0].scatter(df_f["T_K"][mask], preds[mask], color="tab:red", alpha=0.7)
-    axs[0].plot(df_f["T_K"], df_f["T_K"], linestyle="--", color="gray")
-    axs[0].set_xlabel("Наблюдаемая T, K")
-    axs[0].set_ylabel("Предсказанная T, K")
+    axs[0].scatter(df_f["T_C"][mask], preds[mask], color="tab:red", alpha=0.7)
+    axs[0].plot(df_f["T_C"], df_f["T_C"], linestyle="--", color="gray")
+    axs[0].set_xlabel("Наблюдаемая T, °C")
+    axs[0].set_ylabel("Предсказанная T, °C")
     axs[0].set_title("Факт vs прогноз")
-    axs[1].hist(df_f["T_K"][mask] - preds[mask], bins=15, color="tab:red")
-    axs[1].set_xlabel("ΔT, K")
+    axs[1].hist(df_f["T_C"][mask] - preds[mask], bins=15, color="tab:red")
+    axs[1].set_xlabel("ΔT, °C")
     axs[1].set_title("Остатки")
     st.pyplot(fig)
 
@@ -806,15 +808,16 @@ def render_summary_tab(df, selected_m):
     ]:
         if preds is None:
             continue
-        metrics = compute_temp_metrics(df["T_K"].values, np.array(preds))
+        preds_C = np.array(preds) - 273.15
+        metrics = compute_temp_metrics(df["T_C"].values, preds_C)
         rows_T.append({
             "Модель": name,
             "R²": metrics["r2"],
-            "RMSE, K": metrics["rmse"],
-            "MAE, K": metrics["mae"],
+            "RMSE, °C": metrics["rmse"],
+            "MAE, °C": metrics["mae"],
         })
     if rows_T:
-        st.dataframe(pd.DataFrame(rows_T).style.format({"R²": "{:.3f}", "RMSE, K": "{:.1f}", "MAE, K": "{:.1f}"}))
+        st.dataframe(pd.DataFrame(rows_T).style.format({"R²": "{:.3f}", "RMSE, °C": "{:.1f}", "MAE, °C": "{:.1f}"}))
     else:
         st.info("Нет температурных моделей для сводки.")
 
