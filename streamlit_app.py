@@ -447,7 +447,7 @@ def filter_table(df, dev_col, dev_values, key_prefix):
     df_edit.insert(0, "exclude", False)
     df_edit["row_id"] = df_edit.index.astype(int)
     df_edit[dev_col] = dev_values
-    df_edit[dev_col] = df_edit[dev_col].replace([np.inf, -np.inf], np.nan).round(1)
+    df_edit[dev_col] = df_edit[dev_col].replace([np.inf, -np.inf], np.nan).round(0)
 
     styled = df_edit.style.applymap(deviation_color, subset=[dev_col])
     st.markdown("**Цветная оценка отклонений (|Δ|, %):**")
