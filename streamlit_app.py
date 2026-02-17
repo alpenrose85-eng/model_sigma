@@ -518,11 +518,20 @@ def render_analysis(df, selected_m, key_prefix="main"):
         - **τ** — наработка, ч
         - **G** — номер зерна
         - **β_G** — коэффициент влияния зерна
+
+        **Как понимать:** модель описывает рост частиц σ‑фазы как термоактивированный процесс (Аррениус). 
+        Хорошо подходит для интерпретации физики процесса, но может уступать статистическим моделям в точности.
             """
         )
     with col2:
         st.markdown("### Модель с $k_G$(предсказанный размер зерна)")
         st.markdown(r"Модель: $\ln D = a + b \ln \tau + c \ln d_G + \beta_T / T$, где $d_G$ — средний диаметр зерна")
+        st.markdown(
+            """
+**Пояснение:** учитывает влияние размера зерна через средний диаметр. Это вариант кинетической модели роста, 
+где скорость роста связана со временем и температурой, а влияние структуры вводится через $d_G$.
+"""
+        )
         st.markdown(
             fr"""
             - $c = {kG_model['beta_d']:.3f}$ → $k_G \propto d_G^{{{kG_model['beta_d']:.3f}}}$
@@ -545,6 +554,21 @@ def render_analysis(df, selected_m, key_prefix="main"):
         st.markdown("### Градиентный бустинг")
         st.markdown("Функция: $T = f(D, \tau, G, c_{\sigma})$")
         st.markdown(f"- RMSE T: {boosted_model['metrics']['rmse']:.2f}\,K")
+        st.markdown(
+            """
+**Пояснение:** ансамблевый метод, который строит много деревьев решений и поочерёдно исправляет ошибки. 
+Даёт высокую точность на данных, но физический смысл коэффициентов не интерпретируется напрямую.
+"""
+        )
+        try:
+            importances = boosted_model["model"].feature_importances_
+            feat_names = ["D", "τ", "G", "cσ"] if df["G"].nunique() > 1 else ["D", "τ", "cσ"]
+            fig_imp, ax_imp = plt.subplots(figsize=(4, 3))
+            ax_imp.bar(feat_names, importances)
+            ax_imp.set_title("Важность признаков (бустинг)")
+            st.pyplot(fig_imp)
+        except Exception:
+            pass
     st.subheader("Графики качества")
     fig, axs = plt.subplots(2, 2, figsize=(12, 8), constrained_layout=True)
     axs[0, 0].scatter(df["d_equiv_um"], growth_model["D_pred"], c="tab:blue", label="growth")
@@ -715,6 +739,13 @@ def render_analysis(df, selected_m, key_prefix="main"):
     st.subheader("Модели по содержанию σ‑фазы (JMAK)")
     st.latex(r"f_{\sigma}^{max}=0.18,\quad f_{\sigma}=f_{\sigma}^{max}\left(1-\exp[-k(T)\,\tau^{n}]\right)")
     st.latex(r"\ln\left[-\ln\left(1-\frac{f_{\sigma}}{f_{\sigma}^{max}}\right)\right]= a + b\ln\tau + cG + d\ln D + \beta_T/T")
+    st.markdown(
+        """
+**Пояснение:** JMAK описывает кинетику выделения фаз. 
+Параметр **n** задаёт форму кривой роста, а **k(T)** задаёт термоактивированную скорость. 
+Модель ограничена максимумом 18% и подходит для оценки температуры по %σ.
+        """
+    )
 
     if sigma_model_basic is not None or sigma_model_with_d is not None:
         fig_sig, ax_sig = plt.subplots(1, 2, figsize=(10, 4))
