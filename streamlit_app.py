@@ -575,6 +575,48 @@ def render_analysis(df, selected_m):
         "N — число точек в этом диапазоне."
     )
 
+    st.subheader("Модели по содержанию σ‑фазы (JMAK)")
+    st.latex(r"f_{\sigma}^{max}=0.18,\quad f_{\sigma}=f_{\sigma}^{max}\left(1-\exp[-k(T)\,\tau^{n}]\right)")
+    st.latex(r"\ln\left[-\ln\left(1-\frac{f_{\sigma}}{f_{\sigma}^{max}}\right)\right]= a + b\ln\tau + cG + d\ln D + \beta_T/T")
+
+    if sigma_model_basic is not None or sigma_model_with_d is not None:
+        fig_sig, ax_sig = plt.subplots(1, 2, figsize=(10, 4))
+        max_pct = SIGMA_F_MAX * 100
+        if sigma_model_basic is not None:
+            ax_sig[0].scatter(sigma_model_basic["f_true"] * 100, sigma_model_basic["f_pred"] * 100, color="tab:blue", alpha=0.7)
+            ax_sig[0].plot([0, max_pct], [0, max_pct], linestyle="--", color="gray")
+            ax_sig[0].set_xlim(0, max_pct)
+            ax_sig[0].set_ylim(0, max_pct)
+            ax_sig[0].set_title("%σ: факт vs прогноз (без D)")
+            ax_sig[0].set_xlabel("Факт, %")
+            ax_sig[0].set_ylabel("Прогноз, %")
+        if sigma_model_with_d is not None:
+            ax_sig[1].scatter(sigma_model_with_d["f_true"] * 100, sigma_model_with_d["f_pred"] * 100, color="tab:orange", alpha=0.7)
+            ax_sig[1].plot([0, max_pct], [0, max_pct], linestyle="--", color="gray")
+            ax_sig[1].set_xlim(0, max_pct)
+            ax_sig[1].set_ylim(0, max_pct)
+            ax_sig[1].set_title("%σ: факт vs прогноз (с D)")
+            ax_sig[1].set_xlabel("Факт, %")
+            ax_sig[1].set_ylabel("Прогноз, %")
+        st.pyplot(fig_sig)
+
+        def top_outliers_sigma(model, label):
+            if model is None:
+                return None
+            err_pct = np.abs(model["f_true"] - model["f_pred"]) * 100
+            idx = np.argsort(err_pct)[::-1][:5]
+            out_df = df.iloc[idx][["G", "T_C", "tau_h", "d_equiv_um", "c_sigma_pct"]].copy()
+            out_df["err_%"] = err_pct[idx]
+            out_df["model"] = label
+            return out_df
+
+        out_basic = top_outliers_sigma(sigma_model_basic, "JMAK без D")
+        out_with_d = top_outliers_sigma(sigma_model_with_d, "JMAK с D")
+        out_frames = [x for x in [out_basic, out_with_d] if x is not None]
+        if out_frames:
+            st.markdown("**Наиболее выпадающие точки (%σ):**")
+            st.dataframe(pd.concat(out_frames, ignore_index=True).sort_values("err_%", ascending=False))
+
     st.subheader("Качество моделей по содержанию σ‑фазы")
     sigma_rows = []
     for name_m, mdl in [("JMAK без D", sigma_model_basic), ("JMAK с D", sigma_model_with_d)]:
