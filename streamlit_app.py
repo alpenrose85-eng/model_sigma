@@ -398,7 +398,7 @@ def estimate_temperature_sigma(model, f_sigma, tau, G, D=None):
     if not np.isfinite(T_arr[0]):
         return "below" if flags[0] < 0 else "above"
     return float(T_arr[0])
-def render_analysis(df, selected_m):
+def render_analysis(df, selected_m, key_prefix="main"):
     # Быстрое исключение точек по отклонениям
     temp_growth = fit_growth_model(df, selected_m, include_predictions=True, include_G=df["G"].nunique() > 1)
     temp_kG = fit_kG_model(df, include_predictions=True, include_G=df["G"].nunique() > 1)
@@ -474,7 +474,7 @@ def render_analysis(df, selected_m):
         use_container_width=True,
         num_rows="fixed",
         hide_index=True,
-        key="exclude_editor",
+        key=f"exclude_editor_{key_prefix}",
     )
     exclude_ids = edited.loc[edited["exclude"] == True, "row_id"].tolist()
     if exclude_ids:
@@ -773,14 +773,14 @@ def main():
 
     tab1, tab2, tab3 = st.tabs(["Анализ", "По зерну", "Калькулятор"])
     with tab1:
-        render_analysis(df, selected_m)
+        render_analysis(df, selected_m, key_prefix="all")
     with tab2:
         G_sel = st.selectbox("Номер зерна", sorted(df["G"].unique()))
         df_g = df[df["G"] == G_sel].copy()
         if df_g.empty:
             st.info("Нет точек для выбранного номера зерна")
         else:
-            render_analysis(df_g, selected_m)
+            render_analysis(df_g, selected_m, key_prefix=f"G_{G_sel}")
     with tab3:
         st.markdown("Введите данные и получите температуру по 4 моделям")
         col1, col2 = st.columns(2)
