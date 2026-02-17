@@ -7,7 +7,9 @@ import streamlit as st
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
+
 st.set_page_config(page_title="Sigma-phase temperature inspector", layout="wide")
+
 R = 8.314
 COLUMN_RENAMES = {
     "dэкв_мкм": "d_equiv_um",
@@ -41,18 +43,25 @@ GRAIN_SIZES_MM = {
     9: 0.0156,
     10: 0.011,
 }
+
+
 def sigma_activity(T_K):
     T_C = T_K - 273.15
     lower = 1.0 / (1.0 + np.exp(-(T_C - SIGMA_TEMP_MIN) / SIGMA_TEMP_WIDTH))
     upper = 1.0 / (1.0 + np.exp((T_C - SIGMA_TEMP_MAX) / SIGMA_TEMP_WIDTH))
     return lower * upper
+
+
 def compute_predicted_diameter(T_K, tau, G, model, m):
     k0 = model["k0"]
-    Q = model["Q_J"]
+    Q_J = model["Q_J"]
     beta_G = model["beta_G"]
-    gamma = sigma_activity(T_K)
-    exponent = -Q / (R * T_K)
-    return (k0 * gamma * tau * np.exp(beta_G * G) * np.exp(exponent)) ** (1.0 / m)
+    gamma_T = sigma_activity(T_K)
+    exponent = -Q_J / (R * T_K)
+    D_kin = k0 * gamma_T * tau * np.exp(beta_G * G) * np.exp(exponent)
+    return D_kin ** (1.0 / m)
+
+
 def load_data(uploaded):
     if uploaded is None:
         return pd.DataFrame(), 0, 0
@@ -75,48 +84,51 @@ def load_data(uploaded):
     filtered_out = total_rows - mask_valid.sum()
     df = df[mask_valid]
     return df, total_rows, filtered_out
+
+
 def compute_metrics(y_true, y_pred):
     rmse = math.sqrt(mean_squared_error(y_true, y_pred))
     r2 = r2_score(y_true, y_pred)
     rmse_log = math.sqrt(mean_squared_error(np.log(y_true), np.log(y_pred)))
     return {"rmse": rmse, "r2": r2, "rmse_log": rmse_log}
+
+
 def compute_temp_metrics(T_true, T_pred):
     mask = np.isfinite(T_pred)
     if not mask.any():
-        return {"rmse": float("nan"), "r2": float("nan")}
+        return {"rmse": float("nan"), "r2": float("nan"), "mae": float("nan")}
     rmse = math.sqrt(mean_squared_error(T_true[mask], T_pred[mask]))
     r2 = r2_score(T_true[mask], T_pred[mask])
-    return {"rmse": rmse, "r2": r2}
+    mae = np.mean(np.abs(T_true[mask] - T_pred[mask]))
+    return {"rmse": rmse, "r2": r2, "mae": mae}
+
+
 def grain_diameter_um(G):
     G_int = int(round(float(G)))
     size_mm = GRAIN_SIZES_MM.get(G_int)
     return size_mm * 1000 if size_mm else 0.1
+
+
 def grain_diameter_um_array(G_arr):
     G_np = np.array(G_arr, dtype=float)
     return np.vectorize(grain_diameter_um)(G_np)
+
+
 def saturation_factor(D_kin, D_max):
     width = np.maximum(0.1, 0.05 * D_max)
     return 1.0 / (1.0 + np.exp((D_kin - D_max) / width))
-def sigma_activity(T_K):
-    T_C = T_K - 273.15
-    lower = 1.0 / (1.0 + np.exp(-(T_C - SIGMA_TEMP_MIN) / SIGMA_TEMP_WIDTH))
-    upper = 1.0 / (1.0 + np.exp((T_C - SIGMA_TEMP_MAX) / SIGMA_TEMP_WIDTH))
-    return lower * upper
-def compute_predicted_diameter(T_K, tau, G, model, m):
-    k0 = model["k0"]
-    Q_J = model["Q_J"]
-    beta_G = model["beta_G"]
-    gamma_T = sigma_activity(T_K)
-    exponent = -Q_J / (R * T_K)
-    D_kin = k0 * gamma_T * tau * np.exp(beta_G * G) * np.exp(exponent)
-    return D_kin ** (1.0 / m)
+
+
 def apply_saturation(D_kin, G):
     D_max = MAX_PARTICLE_FACTOR * grain_diameter_um(G)
     return D_kin * saturation_factor(D_kin, D_max)
+
+
 def solve_temperature_for_growth(model, m, D, tau, G):
     def f(T):
         D_kin = compute_predicted_diameter(T, tau, G, model, m)
         return apply_saturation(D_kin, G) - D
+
     min_k = SIGMA_TEMP_MIN + 273.15
     max_k = SIGMA_TEMP_MAX + 273.15
     f_min = f(min_k)
@@ -135,6 +147,8 @@ def solve_temperature_for_growth(model, m, D, tau, G):
         else:
             b = mid
     return 0.5 * (a + b)
+
+
 def clamp_temperature(T_arr, return_bounds=False):
     min_K = SIGMA_TEMP_MIN + 273.15
     max_K = SIGMA_TEMP_MAX + 273.15
@@ -143,6 +157,8 @@ def clamp_temperature(T_arr, return_bounds=False):
     flags = np.where(T_arr < min_K, -1, np.where(T_arr > max_K, 1, 0))
     T_out = np.where((T_arr >= min_K) & (T_arr <= max_K), T_arr, np.nan)
     return T_out, flags
+
+
 def fit_growth_model(df, m, include_predictions=False, include_G=True):
     df = df.copy()
     y = m * np.log(df["d_equiv_um"]) - np.log(df["tau_h"])
@@ -189,6 +205,8 @@ def fit_growth_model(df, m, include_predictions=False, include_G=True):
             "temp_rmse_K": temp_rmse,
         })
     return model
+
+
 def fit_kG_model(df, include_predictions=False, include_G=True):
     df = df.copy()
     df["grain_d_um"] = df["G"].apply(grain_diameter_um)
@@ -235,6 +253,8 @@ def fit_kG_model(df, include_predictions=False, include_G=True):
             "temp_rmse_K": temp_rmse,
         })
     return model
+
+
 def estimate_temperature_growth(model, D, tau, G, m):
     if model["beta_T"] == 0:
         return None
@@ -247,6 +267,8 @@ def estimate_temperature_growth(model, D, tau, G, m):
     if not np.isfinite(T_arr[0]):
         return "below" if flags[0] < 0 else "above"
     return float(T_arr[0])
+
+
 def estimate_temperature_kG(model, D, tau, G):
     if model["beta_T"] == 0:
         return None
@@ -260,6 +282,8 @@ def estimate_temperature_kG(model, D, tau, G):
     if not np.isfinite(T_arr[0]):
         return "below" if flags[0] < 0 else "above"
     return float(T_arr[0])
+
+
 def fit_inverse_temp_model(df, include_G=True):
     df = df.copy()
     c_sigma = df["c_sigma_pct"].replace(0, 0.1)
@@ -285,6 +309,8 @@ def fit_inverse_temp_model(df, include_G=True):
         "T_pred_K": T_pred,
         "metrics": compute_temp_metrics(df["T_K"], T_pred),
     }
+
+
 def fit_boosted_temp_model(df, include_G=True):
     df = df.copy()
     df["c_sigma_pct"] = df["c_sigma_pct"].replace(0, 0.1)
@@ -300,6 +326,8 @@ def fit_boosted_temp_model(df, include_G=True):
         "T_pred_K": T_pred_K,
         "metrics": compute_temp_metrics(df["T_K"], T_pred_K),
     }
+
+
 def predict_sigma_fraction(model, tau, G, T_K, D=None):
     y_pred = (
         model["intercept"]
@@ -310,6 +338,8 @@ def predict_sigma_fraction(model, tau, G, T_K, D=None):
     )
     f_norm = 1.0 - np.exp(-np.exp(y_pred))
     return SIGMA_F_MAX * f_norm
+
+
 def fit_sigma_fraction_model(df, include_d=False, include_G=True):
     df = df.copy()
     df = df[df["c_sigma_pct"].notna()].copy()
@@ -349,7 +379,6 @@ def fit_sigma_fraction_model(df, include_d=False, include_G=True):
         "Q_kJ_per_mol": (-beta_T * R) / 1000.0,
         "df_index": df.index.to_numpy(),
     }
-    # предсказание температуры на обучающей выборке
     T_pred = []
     for f_val, tau_val, G_val, d_val in zip(
         f, df["tau_h"], df["G"], df["d_equiv_um"]
@@ -360,7 +389,6 @@ def fit_sigma_fraction_model(df, include_d=False, include_G=True):
         else:
             T_pred.append(np.nan if T_est is None else T_est)
     T_pred = np.array(T_pred, dtype=float)
-    # предсказание f на обучающей выборке
     if include_d:
         f_pred = predict_sigma_fraction(model, df["tau_h"].values, df["G"].values, df["T_K"].values, df["d_equiv_um"].values)
     else:
@@ -374,6 +402,8 @@ def fit_sigma_fraction_model(df, include_d=False, include_G=True):
     model["metrics"] = compute_temp_metrics(df["T_K"].values, T_pred)
     model["metrics_f"] = {"rmse_frac": rmse_f, "rmse_pct": rmse_f_pct, "r2": r2_f}
     return model
+
+
 def estimate_temperature_sigma(model, f_sigma, tau, G, D=None):
     if model is None:
         return None
@@ -398,76 +428,30 @@ def estimate_temperature_sigma(model, f_sigma, tau, G, D=None):
     if not np.isfinite(T_arr[0]):
         return "below" if flags[0] < 0 else "above"
     return float(T_arr[0])
-def render_analysis(df, selected_m, key_prefix="main"):
-    # Быстрое исключение точек по отклонениям
-    temp_growth = fit_growth_model(df, selected_m, include_predictions=True, include_G=df["G"].nunique() > 1)
-    temp_kG = fit_kG_model(df, include_predictions=True, include_G=df["G"].nunique() > 1)
-    temp_sigma_basic = fit_sigma_fraction_model(df, include_d=False, include_G=df["G"].nunique() > 1)
-    temp_sigma_with_d = fit_sigma_fraction_model(df, include_d=True, include_G=df["G"].nunique() > 1)
 
+
+def deviation_color(v):
+    if pd.isna(v):
+        return ""
+    if v <= 15:
+        return "background-color: #dff5e1"
+    if v <= 25:
+        return "background-color: #fff3cd"
+    return "background-color: #f8d7da"
+
+
+def filter_table(df, dev_col, dev_values, key_prefix):
     df_edit = df[["G", "T_C", "tau_h", "d_equiv_um", "c_sigma_pct"]].copy()
     df_edit["d_equiv_um"] = df_edit["d_equiv_um"].round(3)
     df_edit["c_sigma_pct"] = df_edit["c_sigma_pct"].round(2)
     df_edit.insert(0, "exclude", False)
     df_edit["row_id"] = df_edit.index.astype(int)
+    df_edit[dev_col] = dev_values
+    df_edit[dev_col] = df_edit[dev_col].replace([np.inf, -np.inf], np.nan).round(1)
 
-    if temp_growth.get("D_pred") is not None:
-        df_edit["ΔD (Рост), μm"] = (df_edit["d_equiv_um"].values - temp_growth["D_pred"]).round(2)
-        df_edit["|ΔD| Рост, %"] = (
-            np.abs(df_edit["ΔD (Рост), μm"].values) / df_edit["d_equiv_um"].values * 100
-        ).round(0)
-
-    if temp_kG.get("D_pred") is not None:
-        df_edit["ΔD (k_G), μm"] = (df_edit["d_equiv_um"].values - temp_kG["D_pred"]).round(2)
-        df_edit["|ΔD| k_G, %"] = (
-            np.abs(df_edit["ΔD (k_G), μm"].values) / df_edit["d_equiv_um"].values * 100
-        ).round(0)
-
-    if temp_sigma_basic is not None:
-        map_basic = dict(zip(temp_sigma_basic["df_index"], temp_sigma_basic["f_pred"] * 100))
-        df_edit["|Δσ| JMAK, %"] = (
-            df_edit.apply(
-                lambda r: np.nan if pd.isna(r["c_sigma_pct"]) or r["row_id"] not in map_basic
-                else abs(r["c_sigma_pct"] - map_basic[r["row_id"]]) / map_basic[r["row_id"]] * 100
-                if map_basic[r["row_id"]] != 0 else np.nan,
-                axis=1,
-            )
-        ).round(0)
-
-    if temp_sigma_with_d is not None:
-        map_with_d = dict(zip(temp_sigma_with_d["df_index"], temp_sigma_with_d["f_pred"] * 100))
-        df_edit["|Δσ| JMAK+D, %"] = (
-            df_edit.apply(
-                lambda r: np.nan if pd.isna(r["c_sigma_pct"]) or r["row_id"] not in map_with_d
-                else abs(r["c_sigma_pct"] - map_with_d[r["row_id"]]) / map_with_d[r["row_id"]] * 100
-                if map_with_d[r["row_id"]] != 0 else np.nan,
-                axis=1,
-            )
-        ).round(0)
-
-    for col in ["|ΔD| Рост, %", "|ΔD| k_G, %", "|Δσ| JMAK, %", "|Δσ| JMAK+D, %"]:
-        if col in df_edit.columns:
-            df_edit[col] = df_edit[col].replace([np.inf, -np.inf], np.nan)
-
-    st.subheader("Фильтр данных (исключение точек)")
-    styled_edit = df_edit.style
-
-    def color_dev(v):
-        if pd.isna(v):
-            return ""
-        if v <= 15:
-            return "background-color: #dff5e1"
-        if v <= 25:
-            return "background-color: #fff3cd"
-        return "background-color: #f8d7da"
-
-    for col in ["|ΔD| Рост, %", "|ΔD| k_G, %", "|Δσ| JMAK, %", "|Δσ| JMAK+D, %"]:
-        if col in df_edit.columns:
-            styled_edit = styled_edit.applymap(color_dev, subset=[col])
-
+    styled = df_edit.style.applymap(deviation_color, subset=[dev_col])
     st.markdown("**Цветная оценка отклонений (|Δ|, %):**")
-    st.dataframe(styled_edit, use_container_width=True, hide_index=True)
-
+    st.dataframe(styled, use_container_width=True, hide_index=True)
     st.markdown("**Таблица выбора точек для исключения:**")
     edited = st.data_editor(
         df_edit,
@@ -479,127 +463,63 @@ def render_analysis(df, selected_m, key_prefix="main"):
     exclude_ids = edited.loc[edited["exclude"] == True, "row_id"].tolist()
     if exclude_ids:
         st.info(f"Исключено точек: {len(exclude_ids)}")
-    df = df.drop(index=exclude_ids)
+    return df.drop(index=exclude_ids)
+
+
+def render_growth_tab(df, selected_m, key_prefix="growth"):
+    st.subheader("Рост Dэкв (Аррениус)")
+    st.latex(r"D^m = k_0 \cdot e^{-Q/(RT)} \cdot \tau \cdot e^{\beta_G G}")
+    st.markdown(
+        """
+**Обозначения:**
+- **D** — эквивалентный диаметр σ‑фазы, мкм
+- **m** — показатель степени роста
+- **k₀** — коэффициент
+- **Q** — энергия активации, кДж/моль
+- **R** — газовая постоянная
+- **T** — температура, К
+- **τ** — наработка, ч
+- **G** — номер зерна
+- **β_G** — коэффициент влияния зерна
+"""
+    )
 
     include_G = df["G"].nunique() > 1
-    growth_model = fit_growth_model(df, selected_m, include_predictions=True, include_G=include_G)
-    kG_model = fit_kG_model(df, include_predictions=True, include_G=include_G)
-    inverse_model = fit_inverse_temp_model(df, include_G=include_G)
-    boosted_model = fit_boosted_temp_model(df, include_G=include_G)
-    sigma_model_basic = fit_sigma_fraction_model(df, include_d=False, include_G=include_G)
-    sigma_model_with_d = fit_sigma_fraction_model(df, include_d=True, include_G=include_G)
+    initial = fit_growth_model(df, selected_m, include_predictions=True, include_G=include_G)
+    dev = np.abs(df["d_equiv_um"].values - initial["D_pred"]) / df["d_equiv_um"].values * 100
+    df_f = filter_table(df, "|ΔD|, %", dev, key_prefix)
+    include_G = df_f["G"].nunique() > 1
+    model = fit_growth_model(df_f, selected_m, include_predictions=True, include_G=include_G)
 
-    st.subheader("Параметры моделей")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("### Рост Dэкв (Аррениус)")
-        st.markdown(
-            fr"""
-            - $k_0 = e^{{{growth_model['intercept']:.2f}}} \approx {growth_model['k0']:.0f}$
-            - $Q = {-growth_model['beta_T'] * R / 1000:.1f}\,\mathrm{{кДж/моль}}$
-            - $\beta_G = {growth_model['beta_G']:.3f}$
-            - $\mathrm{{RMSE}}(D) = {growth_model['metric']['rmse']:.3f}\,\mu\mathrm{{m}}$
-            - $\mathrm{{RMSE}}(\ln D) = {growth_model['metric']['rmse_log']:.3f}$
-            - $R^2 = {growth_model['metric']['r2']:.3f}$
-            - $\mathrm{{RMSE}}(T) = {growth_model['temp_rmse_K']:.1f}\,\mathrm{{K}}$
-            """,
-            unsafe_allow_html=True,
-        )
-        st.latex(r"D^m = k_0 \cdot e^{-Q/(RT)} \cdot \tau \cdot e^{\beta_G G}")
-        st.markdown(
-            """
-        **Обозначения:**
-        - **D** — эквивалентный диаметр σ‑фазы, мкм
-        - **m** — показатель степени роста (подбирается по данным)
-        - **k₀** — коэффициент, определяемый экспериментально
-        - **Q** — энергия активации роста, кДж/моль
-        - **R** — универсальная газовая постоянная = 8.314 Дж/(моль·К)
-        - **T** — температура, К
-        - **τ** — наработка, ч
-        - **G** — номер зерна
-        - **β_G** — коэффициент влияния зерна
+    st.markdown(
+        fr"""
+- $k_0 = e^{{{model['intercept']:.2f}}} \approx {model['k0']:.0f}$
+- $Q = {-model['beta_T'] * R / 1000:.1f}\,\mathrm{{кДж/моль}}$
+- $\beta_G = {model['beta_G']:.3f}$
+- $\mathrm{{RMSE}}(D) = {model['metric']['rmse']:.3f}\,\mu\mathrm{{m}}$
+- $\mathrm{{RMSE}}(\ln D) = {model['metric']['rmse_log']:.3f}$
+- $R^2 = {model['metric']['r2']:.3f}$
+- $\mathrm{{RMSE}}(T) = {model['temp_rmse_K']:.1f}\,\mathrm{{K}}$
+""",
+        unsafe_allow_html=True,
+    )
 
-        **Как понимать:** модель описывает рост частиц σ‑фазы как термоактивированный процесс (Аррениус). 
-        Хорошо подходит для интерпретации физики процесса, но может уступать статистическим моделям в точности.
-            """
-        )
-    with col2:
-        st.markdown("### Модель с $k_G$(предсказанный размер зерна)")
-        st.markdown(r"Модель: $\ln D = a + b \ln \tau + c \ln d_G + \beta_T / T$, где $d_G$ — средний диаметр зерна")
-        st.markdown(
-            """
-**Пояснение:** учитывает влияние размера зерна через средний диаметр. Это вариант кинетической модели роста, 
-где скорость роста связана со временем и температурой, а влияние структуры вводится через $d_G$.
-"""
-        )
-        st.markdown(
-            fr"""
-            - $c = {kG_model['beta_d']:.3f}$ → $k_G \propto d_G^{{{kG_model['beta_d']:.3f}}}$
-            - $b = {kG_model['beta_tau']:.3f}$
-            - $\beta_T = {kG_model['beta_T']:.1f}$
-            - $\mathrm{{RMSE}}(D) = {kG_model['metric']['rmse']:.3f}\,\mu\mathrm{{m}}$
-            - $\mathrm{{RMSE}}(\ln D) = {kG_model['metric']['rmse_log']:.3f}$
-            - $R^2 = {kG_model['metric']['r2']:.3f}$
-            - $\mathrm{{RMSE}}(T) = {kG_model['temp_rmse_K']:.1f}\,\mathrm{{K}}$
-            """,
-            unsafe_allow_html=True,
-        )
-    st.subheader("Дополнительные модели температуры")
-    col3, col4 = st.columns(2)
-    with col3:
-        st.markdown("### Модель по 1/T")
-        st.markdown("$\frac{1}{T} = a + b\ln D + c\ln\tau + dG + e\ln c_{\sigma}$")
-        st.markdown(f"- RMSE T: {inverse_model['metrics']['rmse']:.2f}\,K")
-    with col4:
-        st.markdown("### Градиентный бустинг")
-        st.markdown("Функция: $T = f(D, \tau, G, c_{\sigma})$")
-        st.markdown(f"- RMSE T: {boosted_model['metrics']['rmse']:.2f}\,K")
-        st.markdown(
-            """
-**Пояснение:** ансамблевый метод, который строит много деревьев решений и поочерёдно исправляет ошибки. 
-Даёт высокую точность на данных, но физический смысл коэффициентов не интерпретируется напрямую.
-
-**Текст для отчёта (можно копировать):**
-
-«Для оценки температуры эксплуатации использована модель градиентного бустинга (Gradient Boosting Regressor),
-обученная на экспериментальных данных с признаками D, τ, G и cσ. Модель является непараметрической и не задаёт
-аналитической формулы, однако позволяет получить более точные прогнозы температуры в пределах диапазона обучения.
-Качество модели оценивалось по метрикам RMSE и R².»
-"""
-        )
-        try:
-            importances = boosted_model["model"].feature_importances_
-            feat_names = ["D", "τ", "G", "cσ"] if df["G"].nunique() > 1 else ["D", "τ", "cσ"]
-            fig_imp, ax_imp = plt.subplots(figsize=(4, 3))
-            ax_imp.bar(feat_names, importances)
-            ax_imp.set_title("Важность признаков (бустинг)")
-            st.pyplot(fig_imp)
-        except Exception:
-            pass
     st.subheader("Графики качества")
-    fig, axs = plt.subplots(2, 2, figsize=(12, 8), constrained_layout=True)
-    axs[0, 0].scatter(df["d_equiv_um"], growth_model["D_pred"], c="tab:blue", label="growth")
-    axs[0, 0].plot(df["d_equiv_um"], df["d_equiv_um"], linestyle="--", color="gray")
-    axs[0, 0].set_xlabel("Наблюдаемый диаметр, μm")
-    axs[0, 0].set_ylabel("Предсказанный в ростовой модели")
-    axs[0, 0].set_title("Наблюдаемое vs предсказанное — ростовая")
-    axs[0, 1].scatter(df["d_equiv_um"], kG_model["D_pred"], c="tab:orange")
-    axs[0, 1].plot(df["d_equiv_um"], df["d_equiv_um"], linestyle="--", color="gray")
-    axs[0, 1].set_xlabel("Наблюдаемый диаметр, μm")
-    axs[0, 1].set_ylabel("Предсказанный в модели k_G")
-    axs[0, 1].set_title("Наблюдаемое vs предсказанное — k_G")
-    axs[1, 0].hist(df["d_equiv_um"] - growth_model["D_pred"], bins=15, color="tab:blue")
-    axs[1, 0].set_title("Остатки — ростовая модель")
-    axs[1, 0].set_xlabel("ΔD, μm")
-    axs[1, 1].hist(df["d_equiv_um"] - kG_model["D_pred"], bins=15, color="tab:orange")
-    axs[1, 1].set_title("Остатки — модель k_G")
-    axs[1, 1].set_xlabel("ΔD, μm")
+    fig, axs = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
+    axs[0].scatter(df_f["d_equiv_um"], model["D_pred"], c="tab:blue")
+    axs[0].plot(df_f["d_equiv_um"], df_f["d_equiv_um"], linestyle="--", color="gray")
+    axs[0].set_xlabel("Наблюдаемый D, μm")
+    axs[0].set_ylabel("Предсказанный D")
+    axs[0].set_title("Факт vs прогноз")
+    axs[1].hist(df_f["d_equiv_um"] - model["D_pred"], bins=15, color="tab:blue")
+    axs[1].set_xlabel("ΔD, μm")
+    axs[1].set_title("Остатки")
     st.pyplot(fig)
-    # График модели D(P) с доверительным интервалом ±15%
-    st.subheader("Рост Dэкв (Аррениус): D(P) с интервалом ±15%")
-    P = df["T_K"] * (np.log10(df["tau_h"]) - 2 * np.log10(df["T_K"]) + 26.3)
+
+    st.subheader("D(P) с интервалом ±15%")
+    P = df_f["T_K"] * (np.log10(df_f["tau_h"]) - 2 * np.log10(df_f["T_K"]) + 26.3)
     P_vals = P.values
-    D_model = np.array(growth_model["D_pred"])
+    D_model = np.array(model["D_pred"])
     order = np.argsort(P_vals)
     P_sorted = P_vals[order]
     D_sorted = D_model[order]
@@ -608,203 +528,297 @@ def render_analysis(df, selected_m, key_prefix="main"):
     fig_dp, ax_dp = plt.subplots(figsize=(8, 4))
     ax_dp.plot(P_sorted, D_sorted, color="tab:blue", label="Модель")
     ax_dp.fill_between(P_sorted, D_low, D_high, color="tab:blue", alpha=0.2, label="±15%")
-    ax_dp.scatter(P_vals, df["d_equiv_um"], color="black", s=20, alpha=0.7, label="Эксперимент")
+    ax_dp.scatter(P_vals, df_f["d_equiv_um"], color="black", s=20, alpha=0.7, label="Эксперимент")
     ax_dp.set_xlabel("P = T*(log10 τ − 2 log10 T + 26.3)")
     ax_dp.set_ylabel("Dэкв, μm")
     ax_dp.set_title("Модель и экспериментальные точки")
     ax_dp.legend()
     st.pyplot(fig_dp)
-    st.subheader("Температура: предсказания")
-    fig_temp, ax_temp = plt.subplots(figsize=(6, 6))
-    true_T = df["T_K"]
-    for label, preds, color in [
-        ("Ростовая", growth_model["T_pred_K"], "tab:blue"),
-        ("k_G", kG_model["T_pred_K"], "tab:orange"),
-        ("1/T-регрессия", inverse_model["T_pred_K"], "tab:green"),
-        ("Boosted", boosted_model["T_pred_K"], "tab:red"),
-    ]:
-        mask = np.isfinite(preds)
-        ax_temp.scatter(true_T[mask], preds[mask], label=label, alpha=0.7, color=color)
+
+    st.subheader("Температура: прогноз vs факт")
+    fig_temp, ax_temp = plt.subplots(figsize=(6, 5))
+    true_T = df_f["T_K"]
+    preds = model["T_pred_K"]
+    mask = np.isfinite(preds)
+    ax_temp.scatter(true_T[mask], preds[mask], color="tab:blue", alpha=0.7)
     ax_temp.plot(true_T, true_T, linestyle="--", color="gray")
     ax_temp.set_xlabel("Наблюдаемая T, K")
     ax_temp.set_ylabel("Предсказанная T, K")
-    ax_temp.set_title("Сравнение температурного прогноза")
-    ax_temp.legend()
+    ax_temp.set_title("Ростовая модель")
     st.pyplot(fig_temp)
 
-    st.subheader("Градиентный бустинг: факт vs прогноз")
-    fig_boost, ax_boost = plt.subplots(figsize=(6, 4))
-    preds_boost = boosted_model["T_pred_K"]
-    mask_boost = np.isfinite(preds_boost)
-    ax_boost.scatter(true_T[mask_boost], preds_boost[mask_boost], color="tab:red", alpha=0.7, label="Boosted")
-    ax_boost.plot(true_T, true_T, linestyle="--", color="gray")
-    ax_boost.set_xlabel("Наблюдаемая T, K")
-    ax_boost.set_ylabel("Предсказанная T, K")
-    ax_boost.set_title("Градиентный бустинг: прогноз vs эксперимент")
-    ax_boost.legend()
-    st.pyplot(fig_boost)
-    # Сводная таблица по 4 моделям температуры
-    st.subheader("Сводная таблица качества (по диаметру D)")
+    st.subheader("Качество модели")
+    quality = {
+        "RMSE D, μm": model["metric"]["rmse"],
+        "R² D": model["metric"]["r2"],
+        "RMSE T, K": model["temp_rmse_K"],
+    }
+    st.dataframe(pd.DataFrame([quality]))
 
-    st.subheader("Сводная таблица качества (по температуре T)")
-    def subset_metrics_T(T_true, T_pred, mask):
-        if not mask.any():
-            return {"rmse": float("nan"), "r2": float("nan"), "mae": float("nan")}
-        rmse = math.sqrt(mean_squared_error(T_true[mask], T_pred[mask]))
-        r2 = r2_score(T_true[mask], T_pred[mask])
-        mae = np.mean(np.abs(T_true[mask] - T_pred[mask]))
-        return {"rmse": rmse, "r2": r2, "mae": mae}
 
-    T_true_K = df["T_K"].values
-    focus_mask_T = (df["T_C"].values >= 580) & (df["T_C"].values <= 650)
-    models_T = [
+def render_kG_tab(df, key_prefix="kG"):
+    st.subheader("Рост с k_G (зерно)")
+    st.latex(r"\ln D = a + b\ln\tau + c\ln d_G + \beta_T/T")
+    st.markdown(
+        """
+**Обозначения:**
+- **D** — эквивалентный диаметр, мкм
+- **τ** — наработка
+- **d_G** — средний диаметр зерна
+- **T** — температура, К
+"""
+    )
+
+    include_G = df["G"].nunique() > 1
+    initial = fit_kG_model(df, include_predictions=True, include_G=include_G)
+    dev = np.abs(df["d_equiv_um"].values - initial["D_pred"]) / df["d_equiv_um"].values * 100
+    df_f = filter_table(df, "|ΔD|, %", dev, key_prefix)
+    include_G = df_f["G"].nunique() > 1
+    model = fit_kG_model(df_f, include_predictions=True, include_G=include_G)
+
+    st.markdown(
+        fr"""
+- $c = {model['beta_d']:.3f}$ → $k_G \propto d_G^{{{model['beta_d']:.3f}}}$
+- $b = {model['beta_tau']:.3f}$
+- $\beta_T = {model['beta_T']:.1f}$
+- $\mathrm{{RMSE}}(D) = {model['metric']['rmse']:.3f}\,\mu\mathrm{{m}}$
+- $\mathrm{{RMSE}}(\ln D) = {model['metric']['rmse_log']:.3f}$
+- $R^2 = {model['metric']['r2']:.3f}$
+- $\mathrm{{RMSE}}(T) = {model['temp_rmse_K']:.1f}\,\mathrm{{K}}$
+""",
+        unsafe_allow_html=True,
+    )
+
+    st.subheader("Графики качества")
+    fig, axs = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
+    axs[0].scatter(df_f["d_equiv_um"], model["D_pred"], c="tab:orange")
+    axs[0].plot(df_f["d_equiv_um"], df_f["d_equiv_um"], linestyle="--", color="gray")
+    axs[0].set_xlabel("Наблюдаемый D, μm")
+    axs[0].set_ylabel("Предсказанный D")
+    axs[0].set_title("Факт vs прогноз")
+    axs[1].hist(df_f["d_equiv_um"] - model["D_pred"], bins=15, color="tab:orange")
+    axs[1].set_xlabel("ΔD, μm")
+    axs[1].set_title("Остатки")
+    st.pyplot(fig)
+
+    st.subheader("Температура: прогноз vs факт")
+    fig_temp, ax_temp = plt.subplots(figsize=(6, 5))
+    true_T = df_f["T_K"]
+    preds = model["T_pred_K"]
+    mask = np.isfinite(preds)
+    ax_temp.scatter(true_T[mask], preds[mask], color="tab:orange", alpha=0.7)
+    ax_temp.plot(true_T, true_T, linestyle="--", color="gray")
+    ax_temp.set_xlabel("Наблюдаемая T, K")
+    ax_temp.set_ylabel("Предсказанная T, K")
+    ax_temp.set_title("k_G модель")
+    st.pyplot(fig_temp)
+
+    st.subheader("Качество модели")
+    quality = {
+        "RMSE D, μm": model["metric"]["rmse"],
+        "R² D": model["metric"]["r2"],
+        "RMSE T, K": model["temp_rmse_K"],
+    }
+    st.dataframe(pd.DataFrame([quality]))
+
+
+def render_inverse_tab(df, key_prefix="inverse"):
+    st.subheader("Регрессия по 1/T")
+    st.latex(r"\frac{1}{T} = a + b\ln D + c\ln\tau + dG + e\ln c_{\sigma}")
+    st.markdown("Непараметрическая линейная модель по обратной температуре.")
+
+    include_G = df["G"].nunique() > 1
+    initial = fit_inverse_temp_model(df, include_G=include_G)
+    T_true = df["T_K"].values
+    dev = np.abs(T_true - initial["T_pred_K"]) / T_true * 100
+    df_f = filter_table(df, "|ΔT|, %", dev, key_prefix)
+    include_G = df_f["G"].nunique() > 1
+    model = fit_inverse_temp_model(df_f, include_G=include_G)
+
+    st.markdown(f"RMSE T: {model['metrics']['rmse']:.2f} K, R²: {model['metrics']['r2']:.3f}")
+
+    st.subheader("Графики качества")
+    fig, axs = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
+    preds = model["T_pred_K"]
+    mask = np.isfinite(preds)
+    axs[0].scatter(df_f["T_K"][mask], preds[mask], color="tab:green", alpha=0.7)
+    axs[0].plot(df_f["T_K"], df_f["T_K"], linestyle="--", color="gray")
+    axs[0].set_xlabel("Наблюдаемая T, K")
+    axs[0].set_ylabel("Предсказанная T, K")
+    axs[0].set_title("Факт vs прогноз")
+    axs[1].hist(df_f["T_K"][mask] - preds[mask], bins=15, color="tab:green")
+    axs[1].set_xlabel("ΔT, K")
+    axs[1].set_title("Остатки")
+    st.pyplot(fig)
+
+
+def render_boosted_tab(df, key_prefix="boost"):
+    st.subheader("Градиентный бустинг")
+    st.markdown("Функция: $T = f(D, \tau, G, c_{\sigma})$")
+    st.markdown(
+        """
+Ансамблевый метод на деревьях решений. Дает высокую точность, но без аналитической формулы.
+"""
+    )
+
+    include_G = df["G"].nunique() > 1
+    initial = fit_boosted_temp_model(df, include_G=include_G)
+    T_true = df["T_K"].values
+    dev = np.abs(T_true - initial["T_pred_K"]) / T_true * 100
+    df_f = filter_table(df, "|ΔT|, %", dev, key_prefix)
+    include_G = df_f["G"].nunique() > 1
+    model = fit_boosted_temp_model(df_f, include_G=include_G)
+
+    st.markdown(f"RMSE T: {model['metrics']['rmse']:.2f} K, R²: {model['metrics']['r2']:.3f}")
+
+    try:
+        importances = model["model"].feature_importances_
+        feat_names = ["D", "τ", "G", "cσ"] if df_f["G"].nunique() > 1 else ["D", "τ", "cσ"]
+        fig_imp, ax_imp = plt.subplots(figsize=(4, 3))
+        ax_imp.bar(feat_names, importances)
+        ax_imp.set_title("Важность признаков")
+        st.pyplot(fig_imp)
+    except Exception:
+        pass
+
+    st.subheader("Графики качества")
+    fig, axs = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
+    preds = model["T_pred_K"]
+    mask = np.isfinite(preds)
+    axs[0].scatter(df_f["T_K"][mask], preds[mask], color="tab:red", alpha=0.7)
+    axs[0].plot(df_f["T_K"], df_f["T_K"], linestyle="--", color="gray")
+    axs[0].set_xlabel("Наблюдаемая T, K")
+    axs[0].set_ylabel("Предсказанная T, K")
+    axs[0].set_title("Факт vs прогноз")
+    axs[1].hist(df_f["T_K"][mask] - preds[mask], bins=15, color="tab:red")
+    axs[1].set_xlabel("ΔT, K")
+    axs[1].set_title("Остатки")
+    st.pyplot(fig)
+
+
+def render_sigma_tab(df, include_d, key_prefix="sigma"):
+    label = "JMAK с D" if include_d else "JMAK без D"
+    st.subheader(f"{label}")
+    st.latex(r"f_{\sigma}^{max}=0.18,\quad f_{\sigma}=f_{\sigma}^{max}(1-\exp[-k(T)\,\tau^{n}])")
+    st.latex(r"\ln\left[-\ln\left(1-\frac{f_{\sigma}}{f_{\sigma}^{max}}\right)\right]= a + b\ln\tau + cG + d\ln D + \beta_T/T")
+    st.markdown(
+        """
+JMAK описывает кинетику выделения фаз, ограниченную максимумом 18% σ.
+Используется для оценки температуры по содержанию σ‑фазы.
+"""
+    )
+
+    df_sigma = df[df["c_sigma_pct"].notna()].copy()
+    if df_sigma.empty:
+        st.info("Нет данных по содержанию σ‑фазы.")
+        return
+
+    include_G = df_sigma["G"].nunique() > 1
+    initial = fit_sigma_fraction_model(df_sigma, include_d=include_d, include_G=include_G)
+    if initial is None:
+        st.info("Недостаточно данных для JMAK модели.")
+        return
+
+    f_pred = initial["f_pred"] * 100
+    f_true = df_sigma.loc[initial["df_index"], "c_sigma_pct"].values
+    dev = np.abs(f_true - f_pred) / np.where(f_pred == 0, np.nan, f_pred) * 100
+    df_f = filter_table(df_sigma.loc[initial["df_index"]], "|Δσ|, %", dev, key_prefix)
+    include_G = df_f["G"].nunique() > 1
+    model = fit_sigma_fraction_model(df_f, include_d=include_d, include_G=include_G)
+    if model is None:
+        st.info("Недостаточно данных после фильтрации.")
+        return
+
+    st.markdown(
+        fr"""
+- $Q = {model['Q_kJ_per_mol']:.1f}\,\mathrm{{кДж/моль}}$
+- $\mathrm{{RMSE}}(\%\sigma) = {model['metrics_f']['rmse_pct']:.2f}$
+- $R^2 = {model['metrics_f']['r2']:.3f}$
+""",
+        unsafe_allow_html=True,
+    )
+
+    st.subheader("Графики качества")
+    fig, axs = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
+    max_pct = SIGMA_F_MAX * 100
+    axs[0].scatter(model["f_true"] * 100, model["f_pred"] * 100, color="tab:purple", alpha=0.7)
+    axs[0].plot([0, max_pct], [0, max_pct], linestyle="--", color="gray")
+    axs[0].set_xlim(0, max_pct)
+    axs[0].set_ylim(0, max_pct)
+    axs[0].set_xlabel("Факт, %")
+    axs[0].set_ylabel("Прогноз, %")
+    axs[0].set_title("%σ: факт vs прогноз")
+    errs = (model["f_true"] - model["f_pred"]) * 100
+    axs[1].hist(errs, bins=15, color="tab:purple")
+    axs[1].set_xlabel("Δ%σ")
+    axs[1].set_title("Остатки")
+    st.pyplot(fig)
+
+    st.subheader("Качество модели")
+    sigma_df = pd.DataFrame([
+        {
+            "RMSE, %": model["metrics_f"]["rmse_pct"],
+            "R²": model["metrics_f"]["r2"],
+            "Макс. отклонение, %": np.nanmax(np.abs(errs)) if len(errs) else np.nan,
+            "N": len(errs),
+        }
+    ])
+    st.dataframe(sigma_df.style.format({"RMSE, %": "{:.2f}", "R²": "{:.3f}", "Макс. отклонение, %": "{:.2f}"}))
+
+
+def render_summary_tab(df, selected_m):
+    st.subheader("Сводка качества по всем моделям")
+    include_G = df["G"].nunique() > 1
+    growth_model = fit_growth_model(df, selected_m, include_predictions=True, include_G=include_G)
+    kG_model = fit_kG_model(df, include_predictions=True, include_G=include_G)
+    inverse_model = fit_inverse_temp_model(df, include_G=include_G)
+    boosted_model = fit_boosted_temp_model(df, include_G=include_G)
+    sigma_model_basic = fit_sigma_fraction_model(df, include_d=False, include_G=include_G)
+    sigma_model_with_d = fit_sigma_fraction_model(df, include_d=True, include_G=include_G)
+
+    st.markdown("### Качество предсказания диаметра D")
+    rows_D = []
+    for name, preds in [
+        ("Рост Dэкв (Аррениус)", growth_model.get("D_pred")),
+        ("Рост k_G (зерно)", kG_model.get("D_pred")),
+    ]:
+        if preds is None:
+            continue
+        base = compute_metrics(df["d_equiv_um"].values, np.array(preds))
+        rows_D.append({
+            "Модель": name,
+            "R²": base["r2"],
+            "RMSE, μm": base["rmse"],
+            "RMSE lnD": base["rmse_log"],
+        })
+    if rows_D:
+        st.dataframe(pd.DataFrame(rows_D).style.format({"R²": "{:.3f}", "RMSE, μm": "{:.3f}", "RMSE lnD": "{:.3f}"}))
+    else:
+        st.info("Нет моделей диаметра для сводки.")
+
+    st.markdown("### Качество предсказания температуры T")
+    rows_T = []
+    for name, preds in [
         ("Рост Dэкв (Аррениус)", growth_model.get("T_pred_K")),
         ("Рост k_G (зерно)", kG_model.get("T_pred_K")),
         ("Регрессия 1/T", inverse_model.get("T_pred_K")),
         ("Градиентный бустинг", boosted_model.get("T_pred_K")),
-    ]
-    rows_T = []
-    for name, preds in models_T:
+    ]:
         if preds is None:
             continue
-        preds = np.array(preds)
-        base = subset_metrics_T(T_true_K, preds, np.isfinite(preds))
-        focus_mask = np.isfinite(preds) & focus_mask_T
-        n_focus = int(focus_mask.sum())
-        focus = subset_metrics_T(T_true_K, preds, focus_mask) if n_focus >= 2 else {"rmse": float("nan"), "r2": float("nan"), "mae": float("nan")}
+        metrics = compute_temp_metrics(df["T_K"].values, np.array(preds))
         rows_T.append({
             "Модель": name,
-            "R² (вся выборка)": base["r2"],
-            "RMSE, K (вся выборка)": base["rmse"],
-            "MAE, K (вся выборка)": base["mae"],
-            "R² (580–650°C)": focus["r2"],
-            "RMSE, K (580–650°C)": focus["rmse"],
-            "MAE, K (580–650°C)": focus["mae"],
-            "N (580–650°C)": n_focus,
+            "R²": metrics["r2"],
+            "RMSE, K": metrics["rmse"],
+            "MAE, K": metrics["mae"],
         })
-    summary_T = pd.DataFrame(rows_T)
-    st.dataframe(
-        summary_T.style.format({
-            "R² (вся выборка)": "{:.3f}",
-            "RMSE, K (вся выборка)": "{:.1f}",
-            "MAE, K (вся выборка)": "{:.1f}",
-            "R² (580–650°C)": "{:.3f}",
-            "RMSE, K (580–650°C)": "{:.1f}",
-            "MAE, K (580–650°C)": "{:.1f}",
-        })
-    )
-    st.caption(
-        "Эта таблица оценивает качество предсказания температуры T. "
-        "R² — достоверность аппроксимации, RMSE/MAE — ошибки в К. "
-        "Диапазон 580–650°C считается отдельно; если точек меньше 2, метрики не считаются (NaN)."
-    )
-    def subset_metrics_D(D_true, D_pred, mask):
-        if not mask.any():
-            return {"rmse": float("nan"), "r2": float("nan"), "mae": float("nan")}
-        rmse = math.sqrt(mean_squared_error(D_true[mask], D_pred[mask]))
-        r2 = r2_score(D_true[mask], D_pred[mask])
-        mae = np.mean(np.abs(D_true[mask] - D_pred[mask]))
-        return {"rmse": rmse, "r2": r2, "mae": mae}
-    T_true_C = df["T_C"].values
-    focus_mask_temp = (T_true_C >= 580) & (T_true_C <= 650)
-    models = [
-        ("Рост Dэкв (Аррениус)", growth_model.get("D_pred")),
-        ("Рост k_G (зерно)", kG_model.get("D_pred")),
-    ]
-    rows = []
-    for name, preds in models:
-        if preds is None:
-            continue
-        preds = np.array(preds)
-        base = subset_metrics_D(df["d_equiv_um"].values, preds, np.isfinite(preds))
-        focus_mask = np.isfinite(preds) & focus_mask_temp
-        n_focus = int(focus_mask.sum())
-        focus = subset_metrics_D(df["d_equiv_um"].values, preds, focus_mask) if n_focus >= 2 else {"rmse": float("nan"), "r2": float("nan"), "mae": float("nan")}
-        rows.append(
-            {
-                "Модель": name,
-                "R² (вся выборка)": base["r2"],
-                "RMSE, μm (вся выборка)": base["rmse"],
-                "MAE, μm (вся выборка)": base["mae"],
-                "R² (580–650°C)": focus["r2"],
-                "RMSE, μm (580–650°C)": focus["rmse"],
-                "MAE, μm (580–650°C)": focus["mae"],
-                "N (580–650°C)": n_focus,
-            }
-        )
-    summary_df = pd.DataFrame(rows)
-    st.dataframe(
-        summary_df.style.format(
-            {
-                "R² (вся выборка)": "{:.3f}",
-                "RMSE, μm (вся выборка)": "{:.3f}",
-                "MAE, μm (вся выборка)": "{:.3f}",
-                "R² (580–650°C)": "{:.3f}",
-                "RMSE, μm (580–650°C)": "{:.3f}",
-                "MAE, μm (580–650°C)": "{:.3f}",
-            }
-        )
-    )
-    st.caption(
-        "Таблица оценивает качество предсказания D (а не T). "
-        "R² — коэффициент достоверности аппроксимации (ближе к 1 — лучше). "
-        "RMSE — среднеквадратичная ошибка (сильнее штрафует большие ошибки). "
-        "MAE — средняя абсолютная ошибка (средняя по модулю). "
-        "Ошибки по диаметру в μm. "
-        "Диапазон 580–650°C считается отдельно. Если точек меньше 2, метрики не считаются (NaN). "
-        "N — число точек в этом диапазоне."
-    )
+    if rows_T:
+        st.dataframe(pd.DataFrame(rows_T).style.format({"R²": "{:.3f}", "RMSE, K": "{:.1f}", "MAE, K": "{:.1f}"}))
+    else:
+        st.info("Нет температурных моделей для сводки.")
 
-    st.subheader("Модели по содержанию σ‑фазы (JMAK)")
-    st.latex(r"f_{\sigma}^{max}=0.18,\quad f_{\sigma}=f_{\sigma}^{max}\left(1-\exp[-k(T)\,\tau^{n}]\right)")
-    st.latex(r"\ln\left[-\ln\left(1-\frac{f_{\sigma}}{f_{\sigma}^{max}}\right)\right]= a + b\ln\tau + cG + d\ln D + \beta_T/T")
-    st.markdown(
-        """
-**Пояснение:** JMAK описывает кинетику выделения фаз. 
-Параметр **n** задаёт форму кривой роста, а **k(T)** задаёт термоактивированную скорость. 
-Модель ограничена максимумом 18% и подходит для оценки температуры по %σ.
-        """
-    )
-
-    if sigma_model_basic is not None or sigma_model_with_d is not None:
-        fig_sig, ax_sig = plt.subplots(1, 2, figsize=(10, 4))
-        max_pct = SIGMA_F_MAX * 100
-        if sigma_model_basic is not None:
-            ax_sig[0].scatter(sigma_model_basic["f_true"] * 100, sigma_model_basic["f_pred"] * 100, color="tab:blue", alpha=0.7)
-            ax_sig[0].plot([0, max_pct], [0, max_pct], linestyle="--", color="gray")
-            ax_sig[0].set_xlim(0, max_pct)
-            ax_sig[0].set_ylim(0, max_pct)
-            ax_sig[0].set_title("%σ: факт vs прогноз (без D)")
-            ax_sig[0].set_xlabel("Факт, %")
-            ax_sig[0].set_ylabel("Прогноз, %")
-        if sigma_model_with_d is not None:
-            ax_sig[1].scatter(sigma_model_with_d["f_true"] * 100, sigma_model_with_d["f_pred"] * 100, color="tab:orange", alpha=0.7)
-            ax_sig[1].plot([0, max_pct], [0, max_pct], linestyle="--", color="gray")
-            ax_sig[1].set_xlim(0, max_pct)
-            ax_sig[1].set_ylim(0, max_pct)
-            ax_sig[1].set_title("%σ: факт vs прогноз (с D)")
-            ax_sig[1].set_xlabel("Факт, %")
-            ax_sig[1].set_ylabel("Прогноз, %")
-        st.pyplot(fig_sig)
-
-        def top_outliers_sigma(model, label):
-            if model is None:
-                return None
-            err_pct = np.abs(model["f_true"] - model["f_pred"]) * 100
-            idx = np.argsort(err_pct)[::-1][:5]
-            out_df = df.iloc[idx][["G", "T_C", "tau_h", "d_equiv_um", "c_sigma_pct"]].copy()
-            out_df["err_%"] = err_pct[idx]
-            out_df["model"] = label
-            return out_df
-
-        out_basic = top_outliers_sigma(sigma_model_basic, "JMAK без D")
-        out_with_d = top_outliers_sigma(sigma_model_with_d, "JMAK с D")
-        out_frames = [x for x in [out_basic, out_with_d] if x is not None]
-        if out_frames:
-            st.markdown("**Наиболее выпадающие точки (%σ):**")
-            st.dataframe(pd.concat(out_frames, ignore_index=True).sort_values("err_%", ascending=False))
-
-    st.subheader("Качество моделей по содержанию σ‑фазы")
+    st.markdown("### Качество моделей по содержанию σ‑фазы")
     sigma_rows = []
     for name_m, mdl in [("JMAK без D", sigma_model_basic), ("JMAK с D", sigma_model_with_d)]:
         if mdl is None:
@@ -818,11 +832,78 @@ def render_analysis(df, selected_m, key_prefix="main"):
             "N": len(err_pct),
         })
     if sigma_rows:
-        sigma_df = pd.DataFrame(sigma_rows)
-        st.dataframe(sigma_df.style.format({"RMSE, %": "{:.2f}", "R²": "{:.3f}", "Макс. отклонение, %": "{:.2f}"}))
-        st.caption("Метрики по содержанию σ‑фазы: R² — достоверность аппроксимации, RMSE — среднеквадратичная ошибка, Макс. отклонение — наибольшая ошибка в %σ.")
+        st.dataframe(pd.DataFrame(sigma_rows).style.format({"RMSE, %": "{:.2f}", "R²": "{:.3f}", "Макс. отклонение, %": "{:.2f}"}))
     else:
-        st.info("Нет данных для оценки моделей по содержанию σ‑фазы.")
+        st.info("Нет данных для оценки σ‑фазы.")
+
+
+def render_calculator(df, selected_m):
+    include_G = df["G"].nunique() > 1
+    growth_model = fit_growth_model(df, selected_m, include_predictions=True, include_G=include_G)
+    kG_model = fit_kG_model(df, include_predictions=True, include_G=include_G)
+    boosted_model = fit_boosted_temp_model(df, include_G=include_G)
+    sigma_model_basic = fit_sigma_fraction_model(df, include_d=False, include_G=include_G)
+    sigma_model_with_d = fit_sigma_fraction_model(df, include_d=True, include_G=include_G)
+
+    st.markdown("Введите данные и получите температуру по моделям")
+    col1, col2 = st.columns(2)
+    with col1:
+        d_input_calc = st.number_input("D, мкм", min_value=0.1, value=1.5, format="%.3f", key="calc_d")
+        c_sigma_calc = st.number_input("σ‑фаза, % (для JMAK)", min_value=0.1, max_value=SIGMA_F_MAX * 100, value=5.0, format="%.2f", key="calc_sigma")
+    with col2:
+        tau_calc = st.number_input("τ, часы", min_value=1.0, value=5000.0, format="%.1f", key="calc_tau")
+        G_calc = st.number_input("G (номер зерна)", min_value=1.0, value=8.0, format="%.1f", key="calc_g")
+    if st.button("Рассчитать", key="calc_btn"):
+        T1 = estimate_temperature_growth(growth_model, d_input_calc, tau_calc, G_calc, selected_m)
+        T2 = estimate_temperature_kG(kG_model, d_input_calc, tau_calc, G_calc)
+        T3 = estimate_temperature_sigma(sigma_model_basic, c_sigma_calc / 100.0, tau_calc, G_calc, None)
+        T4 = estimate_temperature_sigma(sigma_model_with_d, c_sigma_calc / 100.0, tau_calc, G_calc, d_input_calc)
+        try:
+            feat = np.array([[d_input_calc, tau_calc, G_calc, c_sigma_calc]])
+            T5 = boosted_model["model"].predict(feat)[0]
+        except Exception:
+            T5 = None
+
+        st.markdown("**Результаты (K / °C):**")
+        def fmt(T):
+            if T == "below":
+                return "< 560°C"
+            if T == "above":
+                return "> 900°C"
+            return "—" if T is None else f"{T:.1f} K ({T-273.15:.1f} °C)"
+
+        st.write(f"Рост Dэкв (Аррениус): {fmt(T1)}")
+        st.write(f"Рост k_G (зерно): {fmt(T2)}")
+        st.write(f"JMAK без D: {fmt(T3)}")
+        st.write(f"JMAK с D: {fmt(T4)}")
+        st.write(f"Градиентный бустинг: {fmt(T5)}")
+
+
+def render_model_tabs(df, selected_m, key_prefix="main"):
+    tabs = st.tabs([
+        "Сводка",
+        "Рост Dэкв",
+        "Рост k_G",
+        "1/T",
+        "Бустинг",
+        "JMAK без D",
+        "JMAK с D",
+    ])
+    with tabs[0]:
+        render_summary_tab(df, selected_m)
+    with tabs[1]:
+        render_growth_tab(df, selected_m, key_prefix=f"{key_prefix}_growth")
+    with tabs[2]:
+        render_kG_tab(df, key_prefix=f"{key_prefix}_kG")
+    with tabs[3]:
+        render_inverse_tab(df, key_prefix=f"{key_prefix}_inverse")
+    with tabs[4]:
+        render_boosted_tab(df, key_prefix=f"{key_prefix}_boost")
+    with tabs[5]:
+        render_sigma_tab(df, include_d=False, key_prefix=f"{key_prefix}_sigma_basic")
+    with tabs[6]:
+        render_sigma_tab(df, include_d=True, key_prefix=f"{key_prefix}_sigma_d")
+
 
 def main():
     st.title("Sigma-phase temperature model")
@@ -870,56 +951,19 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.caption("Чтобы подставить исторические точки, обнови файл и перезапусти приложение.")
 
-    # модели для калькулятора (по всей выборке)
-    include_G = df["G"].nunique() > 1
-    growth_model = fit_growth_model(df, selected_m, include_predictions=True, include_G=include_G)
-    kG_model = fit_kG_model(df, include_predictions=True, include_G=include_G)
-    boosted_model = fit_boosted_temp_model(df, include_G=include_G)
-    sigma_model_basic = fit_sigma_fraction_model(df, include_d=False, include_G=include_G)
-    sigma_model_with_d = fit_sigma_fraction_model(df, include_d=True, include_G=include_G)
-
-    tab1, tab2, tab3 = st.tabs(["Анализ", "По зерну", "Калькулятор"])
-    with tab1:
-        render_analysis(df, selected_m, key_prefix="all")
-    with tab2:
+    tab_main, tab_grain, tab_calc = st.tabs(["Модели", "По зерну", "Калькулятор"])
+    with tab_main:
+        render_model_tabs(df, selected_m, key_prefix="all")
+    with tab_grain:
         G_sel = st.selectbox("Номер зерна", sorted(df["G"].unique()))
         df_g = df[df["G"] == G_sel].copy()
         if df_g.empty:
             st.info("Нет точек для выбранного номера зерна")
         else:
-            render_analysis(df_g, selected_m, key_prefix=f"G_{G_sel}")
-    with tab3:
-        st.markdown("Введите данные и получите температуру по 4 моделям")
-        col1, col2 = st.columns(2)
-        with col1:
-            d_input_calc = st.number_input("D, мкм", min_value=0.1, value=1.5, format="%.3f", key="calc_d")
-            c_sigma_calc = st.number_input("σ‑фаза, % (для JMAK)", min_value=0.1, max_value=SIGMA_F_MAX*100, value=5.0, format="%.2f", key="calc_sigma")
-        with col2:
-            tau_calc = st.number_input("τ, часы", min_value=1.0, value=5000.0, format="%.1f", key="calc_tau")
-            G_calc = st.number_input("G (номер зерна)", min_value=1.0, value=8.0, format="%.1f", key="calc_g")
-        if st.button("Рассчитать", key="calc_btn"):
-            T1 = estimate_temperature_growth(growth_model, d_input_calc, tau_calc, G_calc, selected_m)
-            T2 = estimate_temperature_kG(kG_model, d_input_calc, tau_calc, G_calc)
-            T3 = estimate_temperature_sigma(sigma_model_basic, c_sigma_calc/100.0, tau_calc, G_calc, None)
-            T4 = estimate_temperature_sigma(sigma_model_with_d, c_sigma_calc/100.0, tau_calc, G_calc, d_input_calc)
-            # Boosted
-            try:
-                feat = np.array([[d_input_calc, tau_calc, G_calc, c_sigma_calc]])
-                T5 = boosted_model["model"].predict(feat)[0]
-            except Exception:
-                T5 = None
-            st.markdown("**Результаты (K / °C):**")
-            def fmt(T):
-                if T == "below":
-                    return "< 560°C"
-                if T == "above":
-                    return "> 900°C"
-                return "—" if T is None else f"{T:.1f} K ({T-273.15:.1f} °C)"
-            st.write(f"Рост Dэкв (Аррениус): {fmt(T1)}")
-            st.write(f"Рост k_G (зерно): {fmt(T2)}")
-            st.write(f"JMAK без D: {fmt(T3)}")
-            st.write(f"JMAK с D: {fmt(T4)}")
-            st.write(f"Градиентный бустинг: {fmt(T5)}")
+            render_model_tabs(df_g, selected_m, key_prefix=f"G_{G_sel}")
+    with tab_calc:
+        render_calculator(df, selected_m)
+
 
 if __name__ == "__main__":
     main()
