@@ -399,6 +399,88 @@ def estimate_temperature_sigma(model, f_sigma, tau, G, D=None):
         return "below" if flags[0] < 0 else "above"
     return float(T_arr[0])
 def render_analysis(df, selected_m):
+    # Быстрое исключение точек по отклонениям
+    temp_growth = fit_growth_model(df, selected_m, include_predictions=True, include_G=df["G"].nunique() > 1)
+    temp_kG = fit_kG_model(df, include_predictions=True, include_G=df["G"].nunique() > 1)
+    temp_sigma_basic = fit_sigma_fraction_model(df, include_d=False, include_G=df["G"].nunique() > 1)
+    temp_sigma_with_d = fit_sigma_fraction_model(df, include_d=True, include_G=df["G"].nunique() > 1)
+
+    df_edit = df[["G", "T_C", "tau_h", "d_equiv_um", "c_sigma_pct"]].copy()
+    df_edit["d_equiv_um"] = df_edit["d_equiv_um"].round(3)
+    df_edit["c_sigma_pct"] = df_edit["c_sigma_pct"].round(2)
+    df_edit.insert(0, "exclude", False)
+    df_edit["row_id"] = df_edit.index.astype(int)
+
+    if temp_growth.get("D_pred") is not None:
+        df_edit["ΔD (Рост), μm"] = (df_edit["d_equiv_um"].values - temp_growth["D_pred"]).round(2)
+        df_edit["|ΔD| Рост, %"] = (
+            np.abs(df_edit["ΔD (Рост), μm"].values) / df_edit["d_equiv_um"].values * 100
+        ).round(0)
+
+    if temp_kG.get("D_pred") is not None:
+        df_edit["ΔD (k_G), μm"] = (df_edit["d_equiv_um"].values - temp_kG["D_pred"]).round(2)
+        df_edit["|ΔD| k_G, %"] = (
+            np.abs(df_edit["ΔD (k_G), μm"].values) / df_edit["d_equiv_um"].values * 100
+        ).round(0)
+
+    if temp_sigma_basic is not None:
+        map_basic = dict(zip(temp_sigma_basic["df_index"], temp_sigma_basic["f_pred"] * 100))
+        df_edit["|Δσ| JMAK, %"] = (
+            df_edit.apply(
+                lambda r: np.nan if pd.isna(r["c_sigma_pct"]) or r["row_id"] not in map_basic
+                else abs(r["c_sigma_pct"] - map_basic[r["row_id"]]) / map_basic[r["row_id"]] * 100
+                if map_basic[r["row_id"]] != 0 else np.nan,
+                axis=1,
+            )
+        ).round(0)
+
+    if temp_sigma_with_d is not None:
+        map_with_d = dict(zip(temp_sigma_with_d["df_index"], temp_sigma_with_d["f_pred"] * 100))
+        df_edit["|Δσ| JMAK+D, %"] = (
+            df_edit.apply(
+                lambda r: np.nan if pd.isna(r["c_sigma_pct"]) or r["row_id"] not in map_with_d
+                else abs(r["c_sigma_pct"] - map_with_d[r["row_id"]]) / map_with_d[r["row_id"]] * 100
+                if map_with_d[r["row_id"]] != 0 else np.nan,
+                axis=1,
+            )
+        ).round(0)
+
+    for col in ["|ΔD| Рост, %", "|ΔD| k_G, %", "|Δσ| JMAK, %", "|Δσ| JMAK+D, %"]:
+        if col in df_edit.columns:
+            df_edit[col] = df_edit[col].replace([np.inf, -np.inf], np.nan)
+
+    st.subheader("Фильтр данных (исключение точек)")
+    styled_edit = df_edit.style
+
+    def color_dev(v):
+        if pd.isna(v):
+            return ""
+        if v <= 15:
+            return "background-color: #dff5e1"
+        if v <= 25:
+            return "background-color: #fff3cd"
+        return "background-color: #f8d7da"
+
+    for col in ["|ΔD| Рост, %", "|ΔD| k_G, %", "|Δσ| JMAK, %", "|Δσ| JMAK+D, %"]:
+        if col in df_edit.columns:
+            styled_edit = styled_edit.applymap(color_dev, subset=[col])
+
+    st.markdown("**Цветная оценка отклонений (|Δ|, %):**")
+    st.dataframe(styled_edit, use_container_width=True, hide_index=True)
+
+    st.markdown("**Таблица выбора точек для исключения:**")
+    edited = st.data_editor(
+        df_edit,
+        use_container_width=True,
+        num_rows="fixed",
+        hide_index=True,
+        key="exclude_editor",
+    )
+    exclude_ids = edited.loc[edited["exclude"] == True, "row_id"].tolist()
+    if exclude_ids:
+        st.info(f"Исключено точек: {len(exclude_ids)}")
+    df = df.drop(index=exclude_ids)
+
     include_G = df["G"].nunique() > 1
     growth_model = fit_growth_model(df, selected_m, include_predictions=True, include_G=include_G)
     kG_model = fit_kG_model(df, include_predictions=True, include_G=include_G)
