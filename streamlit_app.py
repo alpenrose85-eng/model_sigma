@@ -900,6 +900,12 @@ def main():
             T2 = estimate_temperature_kG(kG_model, d_input_calc, tau_calc, G_calc)
             T3 = estimate_temperature_sigma(sigma_model_basic, c_sigma_calc/100.0, tau_calc, G_calc, None)
             T4 = estimate_temperature_sigma(sigma_model_with_d, c_sigma_calc/100.0, tau_calc, G_calc, d_input_calc)
+            # Boosted
+            try:
+                feat = np.array([[d_input_calc, tau_calc, G_calc, c_sigma_calc]])
+                T5 = boosted_model["model"].predict(feat)[0]
+            except Exception:
+                T5 = None
             st.markdown("**Результаты (K / °C):**")
             def fmt(T):
                 if T == "below":
@@ -911,6 +917,7 @@ def main():
             st.write(f"Рост k_G (зерно): {fmt(T2)}")
             st.write(f"JMAK без D: {fmt(T3)}")
             st.write(f"JMAK с D: {fmt(T4)}")
+            st.write(f"Градиентный бустинг: {fmt(T5)}")
 
 if __name__ == "__main__":
     main()
