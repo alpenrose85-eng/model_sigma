@@ -806,6 +806,8 @@ def render_summary_tab(df, selected_m):
 
     st.markdown("### Качество предсказания температуры T")
     rows_T = []
+    T_true_C = df["T_C"].values
+    focus_mask = (T_true_C >= 580) & (T_true_C <= 650)
     for name, preds in [
         ("Рост Dэкв (Аррениус)", growth_model.get("T_pred_K")),
         ("Рост k_G (зерно)", kG_model.get("T_pred_K")),
@@ -815,15 +817,27 @@ def render_summary_tab(df, selected_m):
         if preds is None:
             continue
         preds_C = np.array(preds) - 273.15
-        metrics = compute_temp_metrics(df["T_C"].values, preds_C)
+        metrics = compute_temp_metrics(T_true_C, preds_C)
+        focus_metrics = compute_temp_metrics(T_true_C[focus_mask], preds_C[focus_mask]) if focus_mask.sum() >= 2 else {"rmse": float("nan"), "r2": float("nan"), "mae": float("nan")}
         rows_T.append({
             "Модель": name,
             "R²": metrics["r2"],
             "RMSE, °C": metrics["rmse"],
             "MAE, °C": metrics["mae"],
+            "R² (580–650°C)": focus_metrics["r2"],
+            "RMSE, °C (580–650°C)": focus_metrics["rmse"],
+            "MAE, °C (580–650°C)": focus_metrics["mae"],
+            "N (580–650°C)": int(focus_mask.sum()),
         })
     if rows_T:
-        st.dataframe(pd.DataFrame(rows_T).style.format({"R²": "{:.3f}", "RMSE, °C": "{:.1f}", "MAE, °C": "{:.1f}"}))
+        st.dataframe(pd.DataFrame(rows_T).style.format({
+            "R²": "{:.3f}",
+            "RMSE, °C": "{:.1f}",
+            "MAE, °C": "{:.1f}",
+            "R² (580–650°C)": "{:.3f}",
+            "RMSE, °C (580–650°C)": "{:.1f}",
+            "MAE, °C (580–650°C)": "{:.1f}",
+        }))
     else:
         st.info("Нет температурных моделей для сводки.")
 
