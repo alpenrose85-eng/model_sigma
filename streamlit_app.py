@@ -542,6 +542,59 @@ def render_analysis(df, selected_m):
         focus_mask = np.isfinite(preds) & focus_mask_temp
         n_focus = int(focus_mask.sum())
         focus = subset_metrics_D(df["d_equiv_um"].values, preds, focus_mask) if n_focus >= 2 else {"rmse": float("nan"), "r2": float("nan"), "mae": float("nan")}
+        rows.append(
+            {
+                "Модель": name,
+                "R² (вся выборка)": base["r2"],
+                "RMSE, μm (вся выборка)": base["rmse"],
+                "MAE, μm (вся выборка)": base["mae"],
+                "R² (580–650°C)": focus["r2"],
+                "RMSE, μm (580–650°C)": focus["rmse"],
+                "MAE, μm (580–650°C)": focus["mae"],
+                "N (580–650°C)": n_focus,
+            }
+        )
+    summary_df = pd.DataFrame(rows)
+    st.dataframe(
+        summary_df.style.format(
+            {
+                "R² (вся выборка)": "{:.3f}",
+                "RMSE, μm (вся выборка)": "{:.3f}",
+                "MAE, μm (вся выборка)": "{:.3f}",
+                "R² (580–650°C)": "{:.3f}",
+                "RMSE, μm (580–650°C)": "{:.3f}",
+                "MAE, μm (580–650°C)": "{:.3f}",
+            }
+        )
+    )
+    st.caption(
+        "Таблица оценивает качество предсказания D (а не T). "
+        "R² — коэффициент достоверности аппроксимации (ближе к 1 — лучше). "
+        "RMSE/MAE — ошибки по диаметру в μm. "
+        "Диапазон 580–650°C считается отдельно. Если точек меньше 2, метрики не считаются (NaN). "
+        "N — число точек в этом диапазоне."
+    )
+
+    st.subheader("Качество моделей по содержанию σ‑фазы")
+    sigma_rows = []
+    for name_m, mdl in [("JMAK без D", sigma_model_basic), ("JMAK с D", sigma_model_with_d)]:
+        if mdl is None:
+            continue
+        err_pct = np.abs(mdl["f_true"] - mdl["f_pred"]) * 100
+        sigma_rows.append({
+            "Модель": name_m,
+            "RMSE, %": mdl["metrics_f"]["rmse_pct"],
+            "R²": mdl["metrics_f"]["r2"],
+            "Макс. отклонение, %": np.nanmax(err_pct),
+            "N": len(err_pct),
+        })
+    if sigma_rows:
+        sigma_df = pd.DataFrame(sigma_rows)
+        st.dataframe(sigma_df.style.format({"RMSE, %": "{:.2f}", "R²": "{:.3f}", "Макс. отклонение, %": "{:.2f}"}))
+        st.caption("Метрики рассчитаны по содержанию σ‑фазы: RMSE и R² по %σ.")
+    else:
+        st.info("Нет данных для оценки моделей по содержанию σ‑фазы.")
+
 def main():
     st.title("Sigma-phase temperature model")
     st.markdown(
