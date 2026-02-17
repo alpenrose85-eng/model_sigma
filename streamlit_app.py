@@ -631,6 +631,18 @@ def render_analysis(df, selected_m, key_prefix="main"):
     ax_temp.set_title("Сравнение температурного прогноза")
     ax_temp.legend()
     st.pyplot(fig_temp)
+
+    st.subheader("Градиентный бустинг: факт vs прогноз")
+    fig_boost, ax_boost = plt.subplots(figsize=(6, 4))
+    preds_boost = boosted_model["T_pred_K"]
+    mask_boost = np.isfinite(preds_boost)
+    ax_boost.scatter(true_T[mask_boost], preds_boost[mask_boost], color="tab:red", alpha=0.7, label="Boosted")
+    ax_boost.plot(true_T, true_T, linestyle="--", color="gray")
+    ax_boost.set_xlabel("Наблюдаемая T, K")
+    ax_boost.set_ylabel("Предсказанная T, K")
+    ax_boost.set_title("Градиентный бустинг: прогноз vs эксперимент")
+    ax_boost.legend()
+    st.pyplot(fig_boost)
     # Сводная таблица по 4 моделям температуры
     st.subheader("Сводная таблица качества (по диаметру D)")
 
