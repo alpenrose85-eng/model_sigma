@@ -871,10 +871,12 @@ def main():
     st.sidebar.caption("Чтобы подставить исторические точки, обнови файл и перезапусти приложение.")
 
     # модели для калькулятора (по всей выборке)
-    growth_model = fit_growth_model(df, selected_m, include_predictions=True)
-    kG_model = fit_kG_model(df, include_predictions=True)
-    sigma_model_basic = fit_sigma_fraction_model(df, include_d=False)
-    sigma_model_with_d = fit_sigma_fraction_model(df, include_d=True)
+    include_G = df["G"].nunique() > 1
+    growth_model = fit_growth_model(df, selected_m, include_predictions=True, include_G=include_G)
+    kG_model = fit_kG_model(df, include_predictions=True, include_G=include_G)
+    boosted_model = fit_boosted_temp_model(df, include_G=include_G)
+    sigma_model_basic = fit_sigma_fraction_model(df, include_d=False, include_G=include_G)
+    sigma_model_with_d = fit_sigma_fraction_model(df, include_d=True, include_G=include_G)
 
     tab1, tab2, tab3 = st.tabs(["Анализ", "По зерну", "Калькулятор"])
     with tab1:
