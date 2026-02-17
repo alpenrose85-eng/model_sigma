@@ -602,6 +602,59 @@ def render_analysis(df, selected_m, key_prefix="main"):
     st.pyplot(fig_temp)
     # Сводная таблица по 4 моделям температуры
     st.subheader("Сводная таблица качества (по диаметру D)")
+
+    st.subheader("Сводная таблица качества (по температуре T)")
+    def subset_metrics_T(T_true, T_pred, mask):
+        if not mask.any():
+            return {"rmse": float("nan"), "r2": float("nan"), "mae": float("nan")}
+        rmse = math.sqrt(mean_squared_error(T_true[mask], T_pred[mask]))
+        r2 = r2_score(T_true[mask], T_pred[mask])
+        mae = np.mean(np.abs(T_true[mask] - T_pred[mask]))
+        return {"rmse": rmse, "r2": r2, "mae": mae}
+
+    T_true_K = df["T_K"].values
+    focus_mask_T = (df["T_C"].values >= 580) & (df["T_C"].values <= 650)
+    models_T = [
+        ("Рост Dэкв (Аррениус)", growth_model.get("T_pred_K")),
+        ("Рост k_G (зерно)", kG_model.get("T_pred_K")),
+        ("Регрессия 1/T", inverse_model.get("T_pred_K")),
+        ("Градиентный бустинг", boosted_model.get("T_pred_K")),
+    ]
+    rows_T = []
+    for name, preds in models_T:
+        if preds is None:
+            continue
+        preds = np.array(preds)
+        base = subset_metrics_T(T_true_K, preds, np.isfinite(preds))
+        focus_mask = np.isfinite(preds) & focus_mask_T
+        n_focus = int(focus_mask.sum())
+        focus = subset_metrics_T(T_true_K, preds, focus_mask) if n_focus >= 2 else {"rmse": float("nan"), "r2": float("nan"), "mae": float("nan")}
+        rows_T.append({
+            "Модель": name,
+            "R² (вся выборка)": base["r2"],
+            "RMSE, K (вся выборка)": base["rmse"],
+            "MAE, K (вся выборка)": base["mae"],
+            "R² (580–650°C)": focus["r2"],
+            "RMSE, K (580–650°C)": focus["rmse"],
+            "MAE, K (580–650°C)": focus["mae"],
+            "N (580–650°C)": n_focus,
+        })
+    summary_T = pd.DataFrame(rows_T)
+    st.dataframe(
+        summary_T.style.format({
+            "R² (вся выборка)": "{:.3f}",
+            "RMSE, K (вся выборка)": "{:.1f}",
+            "MAE, K (вся выборка)": "{:.1f}",
+            "R² (580–650°C)": "{:.3f}",
+            "RMSE, K (580–650°C)": "{:.1f}",
+            "MAE, K (580–650°C)": "{:.1f}",
+        })
+    )
+    st.caption(
+        "Эта таблица оценивает качество предсказания температуры T. "
+        "R² — достоверность аппроксимации, RMSE/MAE — ошибки в К. "
+        "Диапазон 580–650°C считается отдельно; если точек меньше 2, метрики не считаются (NaN)."
+    )
     def subset_metrics_D(D_true, D_pred, mask):
         if not mask.any():
             return {"rmse": float("nan"), "r2": float("nan"), "mae": float("nan")}
