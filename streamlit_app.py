@@ -143,16 +143,25 @@ def clamp_temperature(T_arr, return_bounds=False):
     flags = np.where(T_arr < min_K, -1, np.where(T_arr > max_K, 1, 0))
     T_out = np.where((T_arr >= min_K) & (T_arr <= max_K), T_arr, np.nan)
     return T_out, flags
-def fit_growth_model(df, m, include_predictions=False):
+def fit_growth_model(df, m, include_predictions=False, include_G=True):
     df = df.copy()
     y = m * np.log(df["d_equiv_um"]) - np.log(df["tau_h"])
-    X = np.column_stack([
-        np.ones(len(df)),
-        1.0 / df["T_K"],
-        df["G"],
-    ])
-    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
-    intercept, beta_T, beta_G = beta
+    if include_G:
+        X = np.column_stack([
+            np.ones(len(df)),
+            1.0 / df["T_K"],
+            df["G"],
+        ])
+        beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+        intercept, beta_T, beta_G = beta
+    else:
+        X = np.column_stack([
+            np.ones(len(df)),
+            1.0 / df["T_K"],
+        ])
+        beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+        intercept, beta_T = beta
+        beta_G = 0.0
     Q_J = -beta_T * R
     k0 = math.exp(intercept)
     d_pred = compute_predicted_diameter(df["T_K"], df["tau_h"], df["G"], {"k0": k0, "beta_G": beta_G, "Q_J": Q_J}, m)
@@ -180,18 +189,28 @@ def fit_growth_model(df, m, include_predictions=False):
             "temp_rmse_K": temp_rmse,
         })
     return model
-def fit_kG_model(df, include_predictions=False):
+def fit_kG_model(df, include_predictions=False, include_G=True):
     df = df.copy()
     df["grain_d_um"] = df["G"].apply(grain_diameter_um)
     y = np.log(df["d_equiv_um"])
-    X = np.column_stack([
-        np.ones(len(df)),
-        np.log(df["tau_h"]),
-        np.log(df["grain_d_um"].replace(0, 0.1)),
-        1.0 / df["T_K"],
-    ])
-    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
-    intercept, beta_tau, beta_d, beta_T = beta
+    if include_G:
+        X = np.column_stack([
+            np.ones(len(df)),
+            np.log(df["tau_h"]),
+            np.log(df["grain_d_um"].replace(0, 0.1)),
+            1.0 / df["T_K"],
+        ])
+        beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+        intercept, beta_tau, beta_d, beta_T = beta
+    else:
+        X = np.column_stack([
+            np.ones(len(df)),
+            np.log(df["tau_h"]),
+            1.0 / df["T_K"],
+        ])
+        beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+        intercept, beta_tau, beta_T = beta
+        beta_d = 0.0
     y_pred = X @ beta
     d_pred = np.exp(y_pred)
     metrics = compute_metrics(df["d_equiv_um"], d_pred)
@@ -241,15 +260,22 @@ def estimate_temperature_kG(model, D, tau, G):
     if not np.isfinite(T_arr[0]):
         return "below" if flags[0] < 0 else "above"
     return float(T_arr[0])
-def fit_inverse_temp_model(df):
+def fit_inverse_temp_model(df, include_G=True):
     df = df.copy()
     c_sigma = df["c_sigma_pct"].replace(0, 0.1)
-    features = np.column_stack([
-        np.log(df["d_equiv_um"]),
-        np.log(df["tau_h"]),
-        df["G"],
-        np.log(c_sigma),
-    ])
+    if include_G:
+        features = np.column_stack([
+            np.log(df["d_equiv_um"]),
+            np.log(df["tau_h"]),
+            df["G"],
+            np.log(c_sigma),
+        ])
+    else:
+        features = np.column_stack([
+            np.log(df["d_equiv_um"]),
+            np.log(df["tau_h"]),
+            np.log(c_sigma),
+        ])
     model = LinearRegression().fit(features, 1.0 / df["T_K"])
     y_pred = model.predict(features)
     with np.errstate(divide="ignore"):
@@ -259,10 +285,13 @@ def fit_inverse_temp_model(df):
         "T_pred_K": T_pred,
         "metrics": compute_temp_metrics(df["T_K"], T_pred),
     }
-def fit_boosted_temp_model(df):
+def fit_boosted_temp_model(df, include_G=True):
     df = df.copy()
     df["c_sigma_pct"] = df["c_sigma_pct"].replace(0, 0.1)
-    features = df[["d_equiv_um", "tau_h", "G", "c_sigma_pct"]]
+    if include_G:
+        features = df[["d_equiv_um", "tau_h", "G", "c_sigma_pct"]]
+    else:
+        features = df[["d_equiv_um", "tau_h", "c_sigma_pct"]]
     model = GradientBoostingRegressor(n_estimators=300, max_depth=3, learning_rate=0.05)
     model.fit(features, df["T_K"])
     T_pred_K = model.predict(features)
@@ -281,7 +310,7 @@ def predict_sigma_fraction(model, tau, G, T_K, D=None):
     )
     f_norm = 1.0 - np.exp(-np.exp(y_pred))
     return SIGMA_F_MAX * f_norm
-def fit_sigma_fraction_model(df, include_d=False):
+def fit_sigma_fraction_model(df, include_d=False, include_G=True):
     df = df.copy()
     df = df[df["c_sigma_pct"].notna()].copy()
     df = df[(df["c_sigma_pct"] > 0) & (df["c_sigma_pct"] < 100)]
@@ -291,15 +320,25 @@ def fit_sigma_fraction_model(df, include_d=False):
     f = np.minimum(f, SIGMA_F_MAX)
     f_norm = f / SIGMA_F_MAX
     y = np.log(-np.log(1.0 - f_norm))
-    X_cols = [np.ones(len(df)), np.log(df["tau_h"]), df["G"], 1.0 / df["T_K"]]
+    X_cols = [np.ones(len(df)), np.log(df["tau_h"]), 1.0 / df["T_K"]]
+    if include_G:
+        X_cols.insert(2, df["G"])
     if include_d:
-        X_cols.insert(3, np.log(df["d_equiv_um"]))
+        insert_idx = 3 if include_G else 2
+        X_cols.insert(insert_idx, np.log(df["d_equiv_um"]))
     X = np.column_stack(X_cols)
     beta, *_ = np.linalg.lstsq(X, y, rcond=None)
-    if include_d:
+    if include_G and include_d:
         intercept, beta_tau, beta_G, beta_d, beta_T = beta
-    else:
+    elif include_G and not include_d:
         intercept, beta_tau, beta_G, beta_T = beta
+        beta_d = 0.0
+    elif (not include_G) and include_d:
+        intercept, beta_tau, beta_d, beta_T = beta
+        beta_G = 0.0
+    else:
+        intercept, beta_tau, beta_T = beta
+        beta_G = 0.0
         beta_d = 0.0
     model = {
         "intercept": intercept,
@@ -360,12 +399,13 @@ def estimate_temperature_sigma(model, f_sigma, tau, G, D=None):
         return "below" if flags[0] < 0 else "above"
     return float(T_arr[0])
 def render_analysis(df, selected_m):
-    growth_model = fit_growth_model(df, selected_m, include_predictions=True)
-    kG_model = fit_kG_model(df, include_predictions=True)
-    inverse_model = fit_inverse_temp_model(df)
-    boosted_model = fit_boosted_temp_model(df)
-    sigma_model_basic = fit_sigma_fraction_model(df, include_d=False)
-    sigma_model_with_d = fit_sigma_fraction_model(df, include_d=True)
+    include_G = df["G"].nunique() > 1
+    growth_model = fit_growth_model(df, selected_m, include_predictions=True, include_G=include_G)
+    kG_model = fit_kG_model(df, include_predictions=True, include_G=include_G)
+    inverse_model = fit_inverse_temp_model(df, include_G=include_G)
+    boosted_model = fit_boosted_temp_model(df, include_G=include_G)
+    sigma_model_basic = fit_sigma_fraction_model(df, include_d=False, include_G=include_G)
+    sigma_model_with_d = fit_sigma_fraction_model(df, include_d=True, include_G=include_G)
 
     st.subheader("Параметры моделей")
     col1, col2 = st.columns(2)
@@ -502,8 +542,6 @@ def render_analysis(df, selected_m):
         focus_mask = np.isfinite(preds) & focus_mask_temp
         n_focus = int(focus_mask.sum())
         focus = subset_metrics_D(df["d_equiv_um"].values, preds, focus_mask) if n_focus >= 2 else {"rmse": float("nan"), "r2": float("nan"), "mae": float("nan")}
-        render_analysis(df, selected_m)
-        G_sel = st.selectbox("Номер зерна", sorted(df["G"].unique()))
 def main():
     st.title("Sigma-phase temperature model")
     st.markdown(
