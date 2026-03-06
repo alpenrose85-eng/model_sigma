@@ -826,6 +826,8 @@ def render_summary_tab(df, selected_m):
         ("Рост k_G (зерно)", kG_model.get("T_pred_K")),
         ("Регрессия 1/T", inverse_model.get("T_pred_K")),
         ("Градиентный бустинг", boosted_model.get("T_pred_K")),
+        ("JMAK без D", sigma_model_basic.get("T_pred_K") if sigma_model_basic else None),
+        ("JMAK с D", sigma_model_with_d.get("T_pred_K") if sigma_model_with_d else None),
     ]:
         if preds is None:
             continue
