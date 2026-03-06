@@ -746,6 +746,19 @@ JMAK описывает кинетику выделения фаз, ограни
         unsafe_allow_html=True,
     )
 
+    t_metrics = compute_temp_metrics(
+        df_f["T_C"].values,
+        model["T_pred_K"] - 273.15,
+    )
+    if include_d:
+        st.markdown(
+            fr"""
+- $\mathrm{{RMSE}}(T) = {t_metrics['rmse']:.1f}\,^\circ\mathrm{{C}}$
+- $R^2(T) = {t_metrics['r2']:.3f}$
+""",
+            unsafe_allow_html=True,
+        )
+
     st.subheader("Графики качества")
     fig, axs = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
     max_pct = SIGMA_F_MAX * 100
