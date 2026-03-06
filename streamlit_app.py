@@ -917,6 +917,68 @@ def render_calculator(df, selected_m):
         st.write(f"Градиентный бустинг: {fmt(T5)}")
 
 
+def fit_power_curve(x, y):
+    x = np.array(x, dtype=float)
+    y = np.array(y, dtype=float)
+    mask = (x > 0) & (y > 0) & np.isfinite(x) & np.isfinite(y)
+    if mask.sum() < 2:
+        return None
+    X = np.log(x[mask])
+    Y = np.log(y[mask])
+    b, loga = np.polyfit(X, Y, 1)
+    a = math.exp(loga)
+    return a, b
+
+
+def render_grain_plots_tab(df):
+    st.subheader("Графики по зерну")
+    st.markdown("Два графика для каждого номера зерна: D(τ) и %σ(τ). Легенда — по температурам.")
+    for G_sel in sorted(df["G"].unique()):
+        df_g = df[df["G"] == G_sel].copy()
+        if df_g.empty:
+            continue
+        st.markdown(f"### G = {G_sel}")
+        df_g = df_g.sort_values("tau_h")
+
+        # График D(τ)
+        fig1, ax1 = plt.subplots(figsize=(6, 4))
+        for T_val, grp in df_g.groupby("T_C"):
+            ax1.scatter(grp["tau_h"], grp["d_equiv_um"], label=f"{T_val:.0f}°C")
+            fit = fit_power_curve(grp["tau_h"], grp["d_equiv_um"])
+            if fit:
+                a, b = fit
+                x_line = np.linspace(grp["tau_h"].min(), grp["tau_h"].max(), 100)
+                y_line = a * (x_line ** b)
+                ax1.plot(x_line, y_line, linestyle="--")
+                ax1.text(x_line[-1], y_line[-1], f"D={a:.3g}·τ^{b:.2f}", fontsize=8)
+        ax1.set_xlabel("τ, ч")
+        ax1.set_ylabel("Dэкв, μm")
+        ax1.set_title("Dэкв(τ)")
+        ax1.legend(title="Температура")
+        st.pyplot(fig1)
+
+        # График %σ(τ)
+        fig2, ax2 = plt.subplots(figsize=(6, 4))
+        df_sigma = df_g[df_g["c_sigma_pct"].notna()].copy()
+        if df_sigma.empty:
+            st.info("Нет данных по %σ для этого номера зерна.")
+        else:
+            for T_val, grp in df_sigma.groupby("T_C"):
+                ax2.scatter(grp["tau_h"], grp["c_sigma_pct"], label=f"{T_val:.0f}°C")
+                fit = fit_power_curve(grp["tau_h"], grp["c_sigma_pct"])
+                if fit:
+                    a, b = fit
+                    x_line = np.linspace(grp["tau_h"].min(), grp["tau_h"].max(), 100)
+                    y_line = a * (x_line ** b)
+                    ax2.plot(x_line, y_line, linestyle="--")
+                    ax2.text(x_line[-1], y_line[-1], f"σ={a:.3g}·τ^{b:.2f}", fontsize=8)
+            ax2.set_xlabel("τ, ч")
+            ax2.set_ylabel("%σ")
+            ax2.set_title("%σ(τ)")
+            ax2.legend(title="Температура")
+            st.pyplot(fig2)
+
+
 def render_model_tabs(df, selected_m, key_prefix="main"):
     tabs = st.tabs([
         "Сводка",
@@ -989,7 +1051,7 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.caption("Чтобы подставить исторические точки, обнови файл и перезапусти приложение.")
 
-    tab_main, tab_grain, tab_calc = st.tabs(["Модели", "По зерну", "Калькулятор"])
+    tab_main, tab_grain, tab_plots, tab_calc = st.tabs(["Модели", "По зерну", "Графики по зерну", "Калькулятор"])
     with tab_main:
         render_model_tabs(df, selected_m, key_prefix="all")
     with tab_grain:
@@ -999,6 +1061,8 @@ def main():
             st.info("Нет точек для выбранного номера зерна")
         else:
             render_model_tabs(df_g, selected_m, key_prefix=f"G_{G_sel}")
+    with tab_plots:
+        render_grain_plots_tab(df)
     with tab_calc:
         render_calculator(df, selected_m)
 
