@@ -535,6 +535,10 @@ def render_growth_tab(df, selected_m, key_prefix="growth"):
 """,
         unsafe_allow_html=True,
     )
+    st.markdown("**Подобранная формула:**")
+    st.latex(
+        rf"D^{{{selected_m:.1f}}} = {model['k0']:.3e} \cdot e^{{({model['beta_G']:.4f})G}} \cdot \tau \cdot e^{{-({model['Q_kJ_per_mol']*1000:.2f})/(R T)}}"
+    )
 
     st.subheader("Графики качества")
     fig, axs = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
@@ -620,6 +624,10 @@ def render_kG_tab(df, key_prefix="kG"):
 """,
         unsafe_allow_html=True,
     )
+    st.markdown("**Подобранная формула:**")
+    st.latex(
+        rf"\ln D = {model['intercept']:.4f} + ({model['beta_tau']:.4f})\ln \tau + ({model['beta_d']:.4f})\ln d_G + ({model['beta_T']:.4f})/T"
+    )
 
     st.subheader("Графики качества")
     fig, axs = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
@@ -669,6 +677,17 @@ def render_inverse_tab(df, key_prefix="inverse"):
     model = fit_inverse_temp_model(df_f, include_G=include_G)
 
     st.markdown(f"RMSE T: {model['metrics']['rmse']:.2f} °C, R²: {model['metrics']['r2']:.3f}")
+    coef = model['model'].coef_
+    intercept = model['model'].intercept_
+    st.markdown("**Подобранная формула:**")
+    if include_G:
+        st.latex(
+            rf"\frac{{1}}{{T}} = {intercept:.6f} + ({coef[0]:.6f})\ln D + ({coef[1]:.6f})\ln \tau + ({coef[2]:.6f})G + ({coef[3]:.6f})\ln c_{{\sigma}}"
+        )
+    else:
+        st.latex(
+            rf"\frac{{1}}{{T}} = {intercept:.6f} + ({coef[0]:.6f})\ln D + ({coef[1]:.6f})\ln \tau + ({coef[2]:.6f})\ln c_{{\sigma}}"
+        )
 
     st.subheader("Графики качества")
     fig, axs = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
@@ -704,6 +723,10 @@ def render_boosted_tab(df, key_prefix="boost"):
     model = fit_boosted_temp_model(df_f, include_G=include_G)
 
     st.markdown(f"RMSE T: {model['metrics']['rmse']:.2f} °C, R²: {model['metrics']['r2']:.3f}")
+    st.markdown("**Подобранная модель:**")
+    st.markdown(
+        "Градиентный бустинг не даёт компактной аналитической формулы с подставленными коэффициентами, потому что это ансамбль деревьев решений, а не одна явная регрессия."
+    )
 
     try:
         importances = model["model"].feature_importances_
@@ -771,6 +794,15 @@ JMAK описывает кинетику выделения фаз, ограни
 """,
         unsafe_allow_html=True,
     )
+    st.markdown("**Подобранная формула:**")
+    if include_d:
+        st.latex(
+            rf"\ln\left[-\ln\left(1-\frac{{f_\sigma}}{{0.18}}\right)\right] = {model['intercept']:.4f} + ({model['beta_tau']:.4f})\ln \tau + ({model['beta_G']:.4f})G + ({model['beta_d']:.4f})\ln D + ({model['beta_T']:.4f})/T"
+        )
+    else:
+        st.latex(
+            rf"\ln\left[-\ln\left(1-\frac{{f_\sigma}}{{0.18}}\right)\right] = {model['intercept']:.4f} + ({model['beta_tau']:.4f})\ln \tau + ({model['beta_G']:.4f})G + ({model['beta_T']:.4f})/T"
+        )
 
     st.subheader("Графики качества")
     fig, axs = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
