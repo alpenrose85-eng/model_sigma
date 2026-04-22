@@ -44,6 +44,17 @@ GRAIN_SIZES_MM = {
     10: 0.011,
 }
 
+DEMO_ROWS = [
+    {"G": 3, "T_C": 580, "tau_h": 1200, "d_equiv_um": 0.42, "c_sigma_pct": 1.2},
+    {"G": 3, "T_C": 600, "tau_h": 2400, "d_equiv_um": 0.71, "c_sigma_pct": 2.4},
+    {"G": 4, "T_C": 620, "tau_h": 3600, "d_equiv_um": 1.05, "c_sigma_pct": 3.8},
+    {"G": 4, "T_C": 640, "tau_h": 4800, "d_equiv_um": 1.42, "c_sigma_pct": 5.0},
+    {"G": 5, "T_C": 660, "tau_h": 6000, "d_equiv_um": 1.86, "c_sigma_pct": 6.7},
+    {"G": 5, "T_C": 680, "tau_h": 7200, "d_equiv_um": 2.25, "c_sigma_pct": 8.3},
+    {"G": 6, "T_C": 700, "tau_h": 8400, "d_equiv_um": 2.71, "c_sigma_pct": 10.1},
+    {"G": 6, "T_C": 720, "tau_h": 9600, "d_equiv_um": 3.08, "c_sigma_pct": 11.4},
+]
+
 
 def sigma_activity(T_K):
     T_C = T_K - 273.15
@@ -84,6 +95,12 @@ def load_data(uploaded):
     filtered_out = total_rows - mask_valid.sum()
     df = df[mask_valid]
     return df, total_rows, filtered_out
+
+
+def load_demo_data():
+    df = pd.DataFrame(DEMO_ROWS)
+    df["T_K"] = df["T_C"] + 273.15
+    return df
 
 
 def compute_metrics(y_true, y_pred):
@@ -449,13 +466,22 @@ def filter_table(df, dev_col, dev_values, key_prefix):
     df_edit[dev_col] = dev_values
     df_edit[dev_col] = df_edit[dev_col].replace([np.inf, -np.inf], np.nan).round(0)
 
-    styled = df_edit.style.applymap(deviation_color, subset=[dev_col]).format(
-        {
-            "d_equiv_um": "{:.3f}",
-            "c_sigma_pct": "{:.2f}",
-            dev_col: "{:.0f}",
-        }
-    )
+    try:
+        styled = df_edit.style.map(deviation_color, subset=[dev_col]).format(
+            {
+                "d_equiv_um": "{:.3f}",
+                "c_sigma_pct": "{:.2f}",
+                dev_col: "{:.0f}",
+            }
+        )
+    except AttributeError:
+        styled = df_edit.style.applymap(deviation_color, subset=[dev_col]).format(
+            {
+                "d_equiv_um": "{:.3f}",
+                "c_sigma_pct": "{:.2f}",
+                dev_col: "{:.0f}",
+            }
+        )
     st.markdown("**Цветная оценка отклонений (|Δ|, %):**")
     st.dataframe(styled, use_container_width=True, hide_index=True)
     st.markdown("**Таблица выбора точек для исключения:**")
@@ -746,19 +772,6 @@ JMAK описывает кинетику выделения фаз, ограни
         unsafe_allow_html=True,
     )
 
-    t_metrics = compute_temp_metrics(
-        df_f["T_C"].values,
-        model["T_pred_K"] - 273.15,
-    )
-    if include_d:
-        st.markdown(
-            fr"""
-- $\mathrm{{RMSE}}(T) = {t_metrics['rmse']:.1f}\,^\circ\mathrm{{C}}$
-- $R^2(T) = {t_metrics['r2']:.3f}$
-""",
-            unsafe_allow_html=True,
-        )
-
     st.subheader("Графики качества")
     fig, axs = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
     max_pct = SIGMA_F_MAX * 100
@@ -826,8 +839,6 @@ def render_summary_tab(df, selected_m):
         ("Рост k_G (зерно)", kG_model.get("T_pred_K")),
         ("Регрессия 1/T", inverse_model.get("T_pred_K")),
         ("Градиентный бустинг", boosted_model.get("T_pred_K")),
-        ("JMAK без D", sigma_model_basic.get("T_pred_K") if sigma_model_basic else None),
-        ("JMAK с D", sigma_model_with_d.get("T_pred_K") if sigma_model_with_d else None),
     ]:
         if preds is None:
             continue
@@ -875,110 +886,6 @@ def render_summary_tab(df, selected_m):
         st.info("Нет данных для оценки σ‑фазы.")
 
 
-def render_calculator(df, selected_m):
-    include_G = df["G"].nunique() > 1
-    growth_model = fit_growth_model(df, selected_m, include_predictions=True, include_G=include_G)
-    kG_model = fit_kG_model(df, include_predictions=True, include_G=include_G)
-    boosted_model = fit_boosted_temp_model(df, include_G=include_G)
-    sigma_model_basic = fit_sigma_fraction_model(df, include_d=False, include_G=include_G)
-    sigma_model_with_d = fit_sigma_fraction_model(df, include_d=True, include_G=include_G)
-
-    st.markdown("Введите данные и получите температуру по моделям")
-    col1, col2 = st.columns(2)
-    with col1:
-        d_input_calc = st.number_input("D, мкм", min_value=0.1, value=1.5, format="%.3f", key="calc_d")
-        c_sigma_calc = st.number_input("σ‑фаза, % (для JMAK)", min_value=0.1, max_value=SIGMA_F_MAX * 100, value=5.0, format="%.2f", key="calc_sigma")
-    with col2:
-        tau_calc = st.number_input("τ, часы", min_value=1.0, value=5000.0, format="%.1f", key="calc_tau")
-        G_calc = st.number_input("G (номер зерна)", min_value=1.0, value=8.0, format="%.1f", key="calc_g")
-    if st.button("Рассчитать", key="calc_btn"):
-        T1 = estimate_temperature_growth(growth_model, d_input_calc, tau_calc, G_calc, selected_m)
-        T2 = estimate_temperature_kG(kG_model, d_input_calc, tau_calc, G_calc)
-        T3 = estimate_temperature_sigma(sigma_model_basic, c_sigma_calc / 100.0, tau_calc, G_calc, None)
-        T4 = estimate_temperature_sigma(sigma_model_with_d, c_sigma_calc / 100.0, tau_calc, G_calc, d_input_calc)
-        try:
-            feat = np.array([[d_input_calc, tau_calc, G_calc, c_sigma_calc]])
-            T5 = boosted_model["model"].predict(feat)[0]
-        except Exception:
-            T5 = None
-
-        st.markdown("**Результаты (K / °C):**")
-        def fmt(T):
-            if T == "below":
-                return "< 560°C"
-            if T == "above":
-                return "> 900°C"
-            return "—" if T is None else f"{T:.1f} K ({T-273.15:.1f} °C)"
-
-        st.write(f"Рост Dэкв (Аррениус): {fmt(T1)}")
-        st.write(f"Рост k_G (зерно): {fmt(T2)}")
-        st.write(f"JMAK без D: {fmt(T3)}")
-        st.write(f"JMAK с D: {fmt(T4)}")
-        st.write(f"Градиентный бустинг: {fmt(T5)}")
-
-
-def fit_power_curve(x, y):
-    x = np.array(x, dtype=float)
-    y = np.array(y, dtype=float)
-    mask = (x > 0) & (y > 0) & np.isfinite(x) & np.isfinite(y)
-    if mask.sum() < 2:
-        return None
-    X = np.log(x[mask])
-    Y = np.log(y[mask])
-    b, loga = np.polyfit(X, Y, 1)
-    a = math.exp(loga)
-    return a, b
-
-
-def render_grain_plots_tab(df):
-    st.subheader("Графики по зерну")
-    st.markdown("Два графика для каждого номера зерна: D(τ) и %σ(τ). Легенда — по температурам.")
-    for G_sel in sorted(df["G"].unique()):
-        df_g = df[df["G"] == G_sel].copy()
-        if df_g.empty:
-            continue
-        st.markdown(f"### G = {G_sel}")
-        df_g = df_g.sort_values("tau_h")
-
-        # График D(τ)
-        fig1, ax1 = plt.subplots(figsize=(6, 4))
-        for T_val, grp in df_g.groupby("T_C"):
-            ax1.scatter(grp["tau_h"], grp["d_equiv_um"], label=f"{T_val:.0f}°C")
-            fit = fit_power_curve(grp["tau_h"], grp["d_equiv_um"])
-            if fit:
-                a, b = fit
-                x_line = np.linspace(grp["tau_h"].min(), grp["tau_h"].max(), 100)
-                y_line = a * (x_line ** b)
-                ax1.plot(x_line, y_line, linestyle="--")
-                ax1.text(x_line[-1], y_line[-1], f"D={a:.3g}·τ^{b:.2f}", fontsize=8)
-        ax1.set_xlabel("τ, ч")
-        ax1.set_ylabel("Dэкв, μm")
-        ax1.set_title("Dэкв(τ)")
-        ax1.legend(title="Температура")
-        st.pyplot(fig1)
-
-        # График %σ(τ)
-        fig2, ax2 = plt.subplots(figsize=(6, 4))
-        df_sigma = df_g[df_g["c_sigma_pct"].notna()].copy()
-        if df_sigma.empty:
-            st.info("Нет данных по %σ для этого номера зерна.")
-        else:
-            for T_val, grp in df_sigma.groupby("T_C"):
-                ax2.scatter(grp["tau_h"], grp["c_sigma_pct"], label=f"{T_val:.0f}°C")
-                fit = fit_power_curve(grp["tau_h"], grp["c_sigma_pct"])
-                if fit:
-                    a, b = fit
-                    x_line = np.linspace(grp["tau_h"].min(), grp["tau_h"].max(), 100)
-                    y_line = a * (x_line ** b)
-                    ax2.plot(x_line, y_line, linestyle="--")
-                    ax2.text(x_line[-1], y_line[-1], f"σ={a:.3g}·τ^{b:.2f}", fontsize=8)
-            ax2.set_xlabel("τ, ч")
-            ax2.set_ylabel("%σ")
-            ax2.set_title("%σ(τ)")
-            ax2.legend(title="Температура")
-            st.pyplot(fig2)
-
-
 def render_model_tabs(df, selected_m, key_prefix="main"):
     tabs = st.tabs([
         "Сводка",
@@ -1019,25 +926,29 @@ def main():
 
     with st.sidebar.expander("Загрузка данных"):
         uploaded = st.file_uploader("Загрузи CSV или Excel с измерениями", type=["csv", "xlsx", "xls"])
+        use_demo = st.toggle("Показать demo-данные", value=True, disabled=uploaded is not None)
         st.caption("Обязательно: G, T_C, tau_h, dэкв_мкм; c_sigma_pct опционально")
 
     if uploaded is None:
-        st.info("Загрузи файл с новыми экспериментальными точками — после загрузки появятся модели и графики.")
-        return
+        if not use_demo:
+            st.info("Загрузи файл с новыми экспериментальными точками или включи demo-данные в боковой панели.")
+            return
+        df = load_demo_data()
+        st.info("Сейчас показаны demo-данные. Загрузи свой CSV/XLSX слева, чтобы пересчитать модели на реальных точках.")
+    else:
+        try:
+            df, total_rows, filtered_out = load_data(uploaded)
+        except ValueError as exc:
+            st.error(str(exc))
+            return
 
-    try:
-        df, total_rows, filtered_out = load_data(uploaded)
-    except ValueError as exc:
-        st.error(str(exc))
-        return
-
-    if filtered_out > 0:
-        st.warning(
-            f"{filtered_out} из {total_rows} строк не входят в диапазон температур {SIGMA_TEMP_MIN}–{SIGMA_TEMP_MAX}°C, где σ-фаза стабильна."
-        )
-    if df.empty:
-        st.error("В загруженном файле нет точек внутри допустимого диапазона σ-фазы.")
-        return
+        if filtered_out > 0:
+            st.warning(
+                f"{filtered_out} из {total_rows} строк не входят в диапазон температур {SIGMA_TEMP_MIN}–{SIGMA_TEMP_MAX}°C, где σ-фаза стабильна."
+            )
+        if df.empty:
+            st.error("В загруженном файле нет точек внутри допустимого диапазона σ-фазы.")
+            return
 
     st.sidebar.subheader("Выбор роста")
     m_candidates = np.round(np.linspace(1.0, 3.0, 21), 2)
@@ -1051,7 +962,7 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.caption("Чтобы подставить исторические точки, обнови файл и перезапусти приложение.")
 
-    tab_main, tab_grain, tab_plots, tab_calc = st.tabs(["Модели", "По зерну", "Графики по зерну", "Калькулятор"])
+    tab_main, tab_grain, tab_calc = st.tabs(["Модели", "По зерну", "Калькулятор"])
     with tab_main:
         render_model_tabs(df, selected_m, key_prefix="all")
     with tab_grain:
@@ -1061,8 +972,6 @@ def main():
             st.info("Нет точек для выбранного номера зерна")
         else:
             render_model_tabs(df_g, selected_m, key_prefix=f"G_{G_sel}")
-    with tab_plots:
-        render_grain_plots_tab(df)
     with tab_calc:
         render_calculator(df, selected_m)
 
