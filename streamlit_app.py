@@ -886,6 +886,49 @@ def render_summary_tab(df, selected_m):
         st.info("Нет данных для оценки σ‑фазы.")
 
 
+def render_calculator(df, selected_m):
+    include_G = df["G"].nunique() > 1
+    growth_model = fit_growth_model(df, selected_m, include_predictions=True, include_G=include_G)
+    kG_model = fit_kG_model(df, include_predictions=True, include_G=include_G)
+    boosted_model = fit_boosted_temp_model(df, include_G=include_G)
+    sigma_model_basic = fit_sigma_fraction_model(df, include_d=False, include_G=include_G)
+    sigma_model_with_d = fit_sigma_fraction_model(df, include_d=True, include_G=include_G)
+
+    st.markdown("Введите данные и получите температуру по моделям")
+    col1, col2 = st.columns(2)
+    with col1:
+        d_input_calc = st.number_input("D, мкм", min_value=0.1, value=1.5, format="%.3f", key="calc_d")
+        c_sigma_calc = st.number_input("σ‑фаза, % (для JMAK)", min_value=0.1, max_value=SIGMA_F_MAX * 100, value=5.0, format="%.2f", key="calc_sigma")
+    with col2:
+        tau_calc = st.number_input("τ, часы", min_value=1.0, value=5000.0, format="%.1f", key="calc_tau")
+        G_calc = st.number_input("G (номер зерна)", min_value=1.0, value=8.0, format="%.1f", key="calc_g")
+    if st.button("Рассчитать", key="calc_btn"):
+        T1 = estimate_temperature_growth(growth_model, d_input_calc, tau_calc, G_calc, selected_m)
+        T2 = estimate_temperature_kG(kG_model, d_input_calc, tau_calc, G_calc)
+        T3 = estimate_temperature_sigma(sigma_model_basic, c_sigma_calc / 100.0, tau_calc, G_calc, None)
+        T4 = estimate_temperature_sigma(sigma_model_with_d, c_sigma_calc / 100.0, tau_calc, G_calc, d_input_calc)
+        try:
+            feat = np.array([[d_input_calc, tau_calc, G_calc, c_sigma_calc]])
+            T5 = boosted_model["model"].predict(feat)[0]
+        except Exception:
+            T5 = None
+
+        st.markdown("**Результаты (K / °C):**")
+
+        def fmt(T):
+            if T == "below":
+                return "< 560°C"
+            if T == "above":
+                return "> 900°C"
+            return "—" if T is None else f"{T:.1f} K ({T-273.15:.1f} °C)"
+
+        st.write(f"Рост Dэкв (Аррениус): {fmt(T1)}")
+        st.write(f"Рост k_G (зерно): {fmt(T2)}")
+        st.write(f"JMAK без D: {fmt(T3)}")
+        st.write(f"JMAK с D: {fmt(T4)}")
+        st.write(f"Градиентный бустинг: {fmt(T5)}")
+
+
 def render_model_tabs(df, selected_m, key_prefix="main"):
     tabs = st.tabs([
         "Сводка",
