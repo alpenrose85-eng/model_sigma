@@ -7,7 +7,118 @@ from typing import Iterable
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import statsmodels.api as sm
+try:
+    import statsmodels.api as sm
+except ModuleNotFoundError:
+    from types import SimpleNamespace
+    from scipy import stats as _scipy_stats
+
+    class _FallbackInfluence:
+        def __init__(self, residuals, leverage):
+            self.resid_studentized_internal = residuals
+            self.hat_matrix_diag = leverage
+            self.cooks_distance = (np.zeros_like(residuals, dtype=float), np.zeros_like(residuals, dtype=float))
+
+    class _FallbackResults:
+        def __init__(self, X, y, beta):
+            self._X = np.asarray(X, dtype=float)
+            self._y = np.asarray(y, dtype=float)
+            self._beta = np.asarray(beta, dtype=float)
+            self._fitted = self._X @ self._beta
+            self._resid = self._y - self._fitted
+            n, p = self._X.shape
+            xtx_inv = np.linalg.pinv(self._X.T @ self._X)
+            self._xtx_inv = xtx_inv
+            sse = float(self._resid.T @ self._resid)
+            dof = max(n - p, 1)
+            sigma2 = sse / dof
+            cov = xtx_inv * sigma2
+            se = np.sqrt(np.clip(np.diag(cov), 0.0, None))
+            with np.errstate(divide='ignore', invalid='ignore'):
+                tvals = np.divide(self._beta, se, out=np.full_like(self._beta, np.nan), where=se > 0)
+            pvals = 2 * (1 - _scipy_stats.t.cdf(np.abs(tvals), df=dof)) if dof > 0 else np.full_like(tvals, np.nan)
+            y_mean = float(np.mean(self._y)) if n else np.nan
+            ss_tot = float(np.sum((self._y - y_mean) ** 2))
+            rsq = 1.0 - sse / ss_tot if ss_tot > 0 else np.nan
+            self.params = pd.Series(self._beta, index=self.model.exog_names)
+            self.bse = pd.Series(se, index=self.model.exog_names)
+            self.tvalues = pd.Series(tvals, index=self.model.exog_names)
+            self.pvalues = pd.Series(pvals, index=self.model.exog_names)
+            self.rsquared = float(rsq) if np.isfinite(rsq) else np.nan
+            self._sigma2 = sigma2
+            self._n = n
+            self._p = p
+
+        @property
+        def model(self):
+            return self._model
+
+        @model.setter
+        def model(self, value):
+            self._model = value
+
+        def predict(self, X):
+            if isinstance(X, pd.DataFrame):
+                arr = X[self.model.exog_names].to_numpy(dtype=float)
+            else:
+                arr = np.asarray(X, dtype=float)
+            return arr @ self._beta
+
+        def get_influence(self):
+            h = np.sum(self._X * (self._X @ self._xtx_inv), axis=1)
+            denom = np.sqrt(np.clip((1 - h) * self._sigma2, 1e-12, None))
+            stud = self._resid / denom
+            return _FallbackInfluence(stud, h)
+
+        def conf_int(self, alpha=0.05):
+            dof = max(self._n - self._p, 1)
+            q = _scipy_stats.t.ppf(1 - alpha / 2, df=dof) if dof > 0 else np.nan
+            low = self._beta - q * self.bse.to_numpy(dtype=float)
+            high = self._beta + q * self.bse.to_numpy(dtype=float)
+            return pd.DataFrame({0: low, 1: high}, index=self.model.exog_names)
+
+        def summary(self):
+            lines = [
+                'Fallback OLS summary (statsmodels not installed)',
+                f'Observations: {self._n}',
+                f'Predictors: {self._p}',
+                f'R-squared: {self.rsquared:.6f}' if np.isfinite(self.rsquared) else 'R-squared: nan',
+                '',
+                'coef	std err	t	P>|t|',
+            ]
+            for name in self.model.exog_names:
+                lines.append(f"{name}	{self.params[name]:.6g}	{self.bse[name]:.6g}	{self.tvalues[name]:.6g}	{self.pvalues[name]:.6g}")
+            return SimpleNamespace(as_text=lambda: '\n'.join(lines))
+
+    class _FallbackOLS:
+        def __init__(self, y, X):
+            if isinstance(X, pd.DataFrame):
+                self.exog_names = list(X.columns)
+                self._X = X.to_numpy(dtype=float)
+            else:
+                self._X = np.asarray(X, dtype=float)
+                self.exog_names = [f'x{i}' for i in range(self._X.shape[1])]
+            if isinstance(y, pd.Series):
+                self._y = y.to_numpy(dtype=float)
+            else:
+                self._y = np.asarray(y, dtype=float)
+
+        def fit(self):
+            beta, *_ = np.linalg.lstsq(self._X, self._y, rcond=None)
+            res = _FallbackResults(self._X, self._y, beta)
+            res.model = self
+            res.params = pd.Series(beta, index=self.exog_names)
+            return res
+
+    def _fallback_add_constant(X):
+        if isinstance(X, pd.DataFrame):
+            if 'const' in X.columns:
+                return X.copy()
+            return pd.concat([pd.Series(1.0, index=X.index, name='const'), X], axis=1)
+        arr = np.asarray(X, dtype=float)
+        return np.column_stack([np.ones(arr.shape[0]), arr])
+
+    sm = SimpleNamespace(OLS=_FallbackOLS, add_constant=_fallback_add_constant)
 import streamlit as st
 from scipy import optimize, stats
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
