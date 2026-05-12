@@ -20,10 +20,11 @@ except ModuleNotFoundError:
             self.cooks_distance = (np.zeros_like(residuals, dtype=float), np.zeros_like(residuals, dtype=float))
 
     class _FallbackResults:
-        def __init__(self, X, y, beta):
+        def __init__(self, X, y, beta, exog_names):
             self._X = np.asarray(X, dtype=float)
             self._y = np.asarray(y, dtype=float)
             self._beta = np.asarray(beta, dtype=float)
+            self._exog_names = list(exog_names)
             self._fitted = self._X @ self._beta
             self._resid = self._y - self._fitted
             n, p = self._X.shape
@@ -40,10 +41,10 @@ except ModuleNotFoundError:
             y_mean = float(np.mean(self._y)) if n else np.nan
             ss_tot = float(np.sum((self._y - y_mean) ** 2))
             rsq = 1.0 - sse / ss_tot if ss_tot > 0 else np.nan
-            self.params = pd.Series(self._beta, index=self.model.exog_names)
-            self.bse = pd.Series(se, index=self.model.exog_names)
-            self.tvalues = pd.Series(tvals, index=self.model.exog_names)
-            self.pvalues = pd.Series(pvals, index=self.model.exog_names)
+            self.params = pd.Series(self._beta, index=self._exog_names)
+            self.bse = pd.Series(se, index=self._exog_names)
+            self.tvalues = pd.Series(tvals, index=self._exog_names)
+            self.pvalues = pd.Series(pvals, index=self._exog_names)
             self.rsquared = float(rsq) if np.isfinite(rsq) else np.nan
             self._sigma2 = sigma2
             self._n = n
@@ -105,9 +106,8 @@ except ModuleNotFoundError:
 
         def fit(self):
             beta, *_ = np.linalg.lstsq(self._X, self._y, rcond=None)
-            res = _FallbackResults(self._X, self._y, beta)
+            res = _FallbackResults(self._X, self._y, beta, self.exog_names)
             res.model = self
-            res.params = pd.Series(beta, index=self.exog_names)
             return res
 
     def _fallback_add_constant(X):
@@ -1761,8 +1761,8 @@ def predict_temperature_sigma_formula(grain_number: float, c_sigma: float, tau: 
         raise ValueError("Для второй модели по проценту время должно быть больше нуля.")
     if float(grain_number) not in GRAIN_SIZE_MM:
         raise ValueError("Sigma-формула поддерживает только номера зерна 3, 4, 5, 6, 7, 8, 9 и 10.")
-    g26 = -4.0 * float(grain_number) ** 2 - 36.848 * float(grain_number) + 1941.6
-    return float(g26 * np.power(float(c_sigma) / np.sqrt(float(tau)), 0.192))
+    g26 = -4.35 * float(grain_number) ** 2 + 12.479 * float(grain_number) + 1289.5
+    return float(g26 * np.power(float(c_sigma) / np.sqrt(float(tau)), 0.127))
 
 
 def build_sigma_formula_evaluation(prepared_df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, float], pd.DataFrame]:
@@ -3072,7 +3072,7 @@ def render_universal_models_tab(prepared_df: pd.DataFrame, valid_grains: list[fl
         quality_rows.append(
             {
                 "Модель": "Вторая модель по проценту",
-                "Версия": "T = G26 · (cσ / √τ)^0.192",
+                "Версия": "T = G26 · (cσ / √τ)^0.127",
                 "R² по T": sigma_formula_eval["R² по T"],
                 "RMSE по T, °C": sigma_formula_eval["RMSE по T, °C"],
                 "MAE по T, °C": sigma_formula_eval["MAE по T, °C"],
@@ -3133,8 +3133,8 @@ def render_universal_models_tab(prepared_df: pd.DataFrame, valid_grains: list[fl
             st.code(
                 "\n".join(
                     [
-                        "T = G26 · (cσ / √τ)^0.192",
-                        "G26 = -4·G² - 36.848·G + 1941.6",
+                        "T = G26 · (cσ / √τ)^0.127",
+                        "G26 = -4.35·G² + 12.479·G + 1289.5",
                         "G = 3, 4, 5, 6, 7, 8, 9, 10",
                     ]
                 ),
@@ -3255,8 +3255,8 @@ def render_sigma_formula_tab(prepared_df: pd.DataFrame) -> None:
     st.code(
         "\n".join(
             [
-                "T = G26 · (cσ / √τ)^0.192",
-                "G26 = -4·G² - 36.848·G + 1941.6",
+                "T = G26 · (cσ / √τ)^0.127",
+                "G26 = -4.35·G² + 12.479·G + 1289.5",
                 "G = 3, 4, 5, 6, 7, 8, 9, 10",
             ]
         ),
